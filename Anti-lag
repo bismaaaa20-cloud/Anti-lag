@@ -1,0 +1,586 @@
+-- =========================================================================
+-- BAGIAN 1 dari 5: FONDASI UTAMA & ARSITEKTUR CORE
+-- =========================================================================
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local Lighting = game:GetService("Lighting")
+local Workspace = game:GetService("Workspace")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Stats = game:GetService("Stats")
+
+-- Cleanup UI lama jika ada agar tidak menumpuk saat re-eksekusi
+local OldUI = PlayerGui:FindFirstChild("UltimateBoosterUI")
+if OldUI then OldUI:Destroy() end
+
+-- State Management Global
+shared.CurrentBoosterMode = shared.CurrentBoosterMode or 1
+shared.Mode4Active = shared.Mode4Active or false
+shared.OriginalBoosterData = shared.OriginalBoosterData or {}
+
+-- Fungsi Helper Visual Sudut Membulat (Corner)
+function shared.ApplyCorner(parent, radius)
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, radius)
+	corner.Parent = parent
+	return corner
+end
+
+-- Fungsi Helper Visual Garis Tepi Halus (Border Stroke)
+function shared.ApplySoftBorder(parent, color, thickness)
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = color
+	stroke.Thickness = thickness
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Transparency = 0.3
+	stroke.Parent = parent
+	return stroke
+end
+
+print("Bagian 1 Sukses Dimuat!")
+-- =========================================================================
+-- BAGIAN 2 dari 5: ARSITEKTUR JENDELA & SCREEN GUI UTAMA
+-- =========================================================================
+local PlayerGui = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+
+-- Pembuatan Container ScreenGui Utama
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "UltimateBoosterUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.DisplayOrder = 999999
+ScreenGui.Parent = PlayerGui
+shared.BoosterScreenGui = ScreenGui
+
+-- Tombol Utama Melayang untuk Buka/Tutup Menu (MenuToggle)
+local MenuToggle = Instance.new("TextButton")
+MenuToggle.Name = "MenuToggle"
+MenuToggle.Size = UDim2.new(0, 130, 0, 32)
+MenuToggle.Position = UDim2.new(1, -145, 0, 140)
+MenuToggle.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
+MenuToggle.TextColor3 = Color3.fromRGB(0, 255, 150)
+MenuToggle.Text = "⚡ FIX BOOSTER"
+MenuToggle.Font = Enum.Font.GothamBold
+MenuToggle.TextSize = 11
+MenuToggle.ZIndex = 100 
+MenuToggle.Parent = ScreenGui
+shared.ApplyCorner(MenuToggle, 6)
+shared.ToggleStrokeGlobal = shared.ApplySoftBorder(MenuToggle, Color3.fromRGB(0, 255, 150), 1.2)
+
+-- Bingkai Jendela Utama UI
+local MainWindow = Instance.new("Frame")
+MainWindow.Name = "MainContainer"
+MainWindow.Size = UDim2.new(0, 480, 0, 300) 
+MainWindow.Position = UDim2.new(0.5, -240, 0.5, -150)
+MainWindow.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
+MainWindow.BackgroundTransparency = 0.15 
+MainWindow.Visible = false 
+MainWindow.ZIndex = 50 
+MainWindow.Parent = ScreenGui
+shared.ApplyCorner(MainWindow, 8)
+shared.ApplySoftBorder(MainWindow, Color3.fromRGB(55, 55, 65), 1.5)
+shared.MainWindowGlobal = MainWindow
+
+-- Judul Menu Utama
+local MainTitle = Instance.new("TextLabel")
+MainTitle.Size = UDim2.new(1, -70, 0, 28)
+MainTitle.Position = UDim2.new(0, 14, 0, 4)
+MainTitle.BackgroundTransparency = 1
+MainTitle.Font = Enum.Font.GothamBold
+MainTitle.TextSize = 13 
+MainTitle.TextColor3 = Color3.fromRGB(230, 235, 245)
+MainTitle.TextXAlignment = Enum.TextXAlignment.Left
+MainTitle.TextYAlignment = Enum.TextYAlignment.Center
+MainTitle.TextScaled = true 
+MainTitle.Text = "⚡ ULTIMATE PERFORMANCE BOOSTER & HARDWARE MONITOR"
+MainTitle.ZIndex = 51
+MainTitle.Parent = MainWindow
+
+local TitleLine = Instance.new("Frame")
+TitleLine.Size = UDim2.new(1, -28, 0, 1)
+TitleLine.Position = UDim2.new(0, 14, 0, 34)
+TitleLine.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+TitleLine.BackgroundTransparency = 0.3
+TitleLine.ZIndex = 51
+TitleLine.Parent = MainWindow
+
+-- Tombol "X" Pojok Kanan Atas
+local CloseMainBtn = Instance.new("TextButton")
+CloseMainBtn.Name = "CloseMainWindowButton"
+CloseMainBtn.Size = UDim2.new(0, 24, 0, 24)
+CloseMainBtn.Position = UDim2.new(1, -34, 0, 6) 
+CloseMainBtn.BackgroundTransparency = 1
+CloseMainBtn.Text = "X"
+CloseMainBtn.TextColor3 = Color3.fromRGB(255, 90, 90)
+CloseMainBtn.Font = Enum.Font.GothamBold
+CloseMainBtn.TextSize = 14
+CloseMainBtn.ZIndex = 60
+CloseMainBtn.Parent = MainWindow
+
+print("Bagian 2 Sukses Dimuat!")
+-- =========================================================================
+-- BAGIAN 3 dari 5: SUB-PANEL KONTROL KIRI, KANAN, & POP-UP
+-- =========================================================================
+local MainWindow = shared.MainWindowGlobal
+local ScreenGui = shared.BoosterScreenGui
+
+-- Pembuatan Sub-Panel Kiri (Tempat Tombol)
+local LeftPanel = Instance.new("Frame")
+LeftPanel.Size = UDim2.new(0, 190, 1, -48)
+LeftPanel.Position = UDim2.new(0, 14, 0, 42)
+LeftPanel.BackgroundColor3 = Color3.fromRGB(25, 25, 30) 
+LeftPanel.BackgroundTransparency = 0.2 
+LeftPanel.ZIndex = 52 
+LeftPanel.Parent = MainWindow
+shared.ApplyCorner(LeftPanel, 6)
+shared.ApplySoftBorder(LeftPanel, Color3.fromRGB(70, 70, 85), 1)
+
+-- Pembuatan Sub-Panel Kanan (Tempat Grafik)
+local RightPanel = Instance.new("Frame")
+RightPanel.Size = UDim2.new(0, 250, 1, -48)
+RightPanel.Position = UDim2.new(0, 216, 0, 42)
+RightPanel.BackgroundColor3 = Color3.fromRGB(12, 12, 15)
+RightPanel.BackgroundTransparency = 0.2
+RightPanel.ZIndex = 52
+RightPanel.Parent = MainWindow
+shared.ApplyCorner(RightPanel, 6)
+shared.ApplySoftBorder(RightPanel, Color3.fromRGB(55, 55, 65), 1)
+shared.RightPanelGlobal = RightPanel
+
+-- Sistem Scrolling untuk Tombol di Panel Kiri
+shared.ButtonScrollGlobal = Instance.new("ScrollingFrame")
+shared.ButtonScrollGlobal.Size = UDim2.new(1, -14, 1, -48)
+shared.ButtonScrollGlobal.Position = UDim2.new(0, 7, 0, 6)
+shared.ButtonScrollGlobal.BackgroundTransparency = 1
+shared.ButtonScrollGlobal.BorderSizePixel = 0
+shared.ButtonScrollGlobal.CanvasSize = UDim2.new(0, 0, 0, 160)
+shared.ButtonScrollGlobal.ScrollBarThickness = 3
+shared.ButtonScrollGlobal.ZIndex = 53
+shared.ButtonScrollGlobal.Parent = LeftPanel
+
+local ScrollLayout = Instance.new("UIListLayout")
+ScrollLayout.Padding = UDim.new(0, 6)
+ScrollLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ScrollLayout.Parent = shared.ButtonScrollGlobal
+
+shared.BrightGridGlobal = Instance.new("Frame")
+shared.BrightGridGlobal.Size = UDim2.new(1, -14, 0, 36)
+shared.BrightGridGlobal.Position = UDim2.new(0, 7, 1, -40)
+shared.BrightGridGlobal.BackgroundTransparency = 1
+shared.BrightGridGlobal.ZIndex = 53
+shared.BrightGridGlobal.Parent = LeftPanel
+
+local GridLayout = Instance.new("UIGridLayout")
+GridLayout.CellSize = UDim2.new(0, 41, 0, 18)
+GridLayout.CellPadding = UDim2.new(0, 4, 0, 4)
+GridLayout.Parent = shared.BrightGridGlobal
+
+-- Overlay Penutup Layar Hitam (Mode 4 AFK)
+shared.BlackScreenGlobal = Instance.new("Frame")
+shared.BlackScreenGlobal.Name = "AbsoluteAFKOverlay"
+shared.BlackScreenGlobal.Size = UDim2.new(1, 0, 1, 200)
+shared.BlackScreenGlobal.Position = UDim2.new(0, 0, 0, -100)
+shared.BlackScreenGlobal.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+shared.BlackScreenGlobal.Visible = false
+shared.BlackScreenGlobal.ZIndex = 45
+shared.BlackScreenGlobal.Parent = ScreenGui
+
+-- Bingkai Pop-Up Dialog Box Konfirmasi Unload
+local Pop = Instance.new("Frame")
+Pop.Size = UDim2.new(0, 280, 0, 115)
+Pop.Position = UDim2.new(0.5, -140, 0.5, -57)
+Pop.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
+Pop.Visible = false
+Pop.ZIndex = 300
+Pop.Parent = ScreenGui
+shared.ApplyCorner(Pop, 6)
+shared.ApplySoftBorder(Pop, Color3.fromRGB(255, 75, 75), 1.2)
+shared.PopG = Pop
+
+local Txt = Instance.new("TextLabel")
+Txt.Size = UDim2.new(1, -20, 0, 45)
+Txt.Position = UDim2.new(0, 10, 0, 12)
+Txt.BackgroundTransparency = 1
+Txt.Text = "Apakah kamu yakin ingin menghapus skrip secara permanen dari game?"
+Txt.TextColor3 = Color3.fromRGB(255, 255, 255)
+Txt.Font = Enum.Font.GothamBold
+Txt.TextSize = 11
+Txt.TextWrapped = true
+Txt.ZIndex = 301
+Txt.Parent = Pop
+
+local Yes = Instance.new("TextButton")
+Yes.Size = UDim2.new(0, 110, 0, 28)
+Yes.Position = UDim2.new(0, 20, 1, -38)
+Yes.BackgroundColor3 = Color3.fromRGB(200, 40, 40)
+Yes.TextColor3 = Color3.fromRGB(255, 255, 255)
+Yes.Text = "IYA"
+Yes.Font = Enum.Font.GothamBold
+Yes.TextSize = 11
+Yes.ZIndex = 301
+Yes.Parent = Pop
+shared.ApplyCorner(Yes, 4)
+
+local No = Instance.new("TextButton")
+No.Size = UDim2.new(0, 110, 0, 28)
+No.Position = UDim2.new(1, -130, 1, -38)
+No.BackgroundColor3 = Color3.fromRGB(45, 50, 60)
+No.TextColor3 = Color3.fromRGB(255, 255, 255)
+No.Text = "TIDAK"
+No.Font = Enum.Font.GothamBold
+No.TextSize = 11
+No.ZIndex = 301
+No.Parent = Pop
+shared.ApplyCorner(No, 4)
+
+print("Bagian 3 Sukses Dimuat!")
+-- =========================================================================
+-- BAGIAN 4 dari 5: MESIN LAMPU NYALA & INTERAKSI MENU UTAMA
+-- =========================================================================
+local ButtonScroll = shared.ButtonScrollGlobal
+local BrightGrid = shared.BrightGridGlobal
+local BlackScreen = shared.BlackScreenGlobal
+local Pop = shared.PopG
+
+local ModeButtons = {}
+
+-- Fungsi Pemrosesan Grafis Aset Game
+local function SetAssetVisibility(obj, visible)
+	pcall(function()
+		if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Sparkles") or obj:IsA("Beam") then
+			if not shared.OriginalBoosterData[obj] then shared.OriginalBoosterData[obj] = {Enabled = obj.Enabled} end
+			obj.Enabled = visible
+		elseif obj:IsA("Decal") or obj:IsA("Texture") then
+			if not shared.OriginalBoosterData[obj] then shared.OriginalBoosterData[obj] = {Transparency = obj.Transparency} end
+			obj.Transparency = visible and shared.OriginalBoosterData[obj].Transparency or 1
+		elseif obj:IsA("Sky") then
+			if not visible then 
+				if obj.Parent ~= nil then shared.OriginalBoosterData[obj] = {Parent = obj.Parent} obj.Parent = nil end
+			else 
+				if shared.OriginalBoosterData[obj] and shared.OriginalBoosterData[obj].Parent then obj.Parent = shared.OriginalBoosterData[obj].Parent end 
+			end
+		end
+	end)
+end
+
+local function CleanObject(object)
+	local LocalPlayer = game:GetService("Players").LocalPlayer
+	if not object:IsA("BasePart") or (LocalPlayer.Character and object:IsDescendantOf(LocalPlayer.Character)) then return end
+	if not shared.OriginalBoosterData[object] then
+		shared.OriginalBoosterData[object] = {
+			Material = object.Material, Color = object.Color, Transparency = object.Transparency, CastShadow = object.CastShadow, TextureID = object:IsA("MeshPart") and object.TextureID or nil
+		}
+	end
+	local mode = shared.CurrentBoosterMode
+	if mode == 1 then
+		object.Material = shared.OriginalBoosterData[object].Material object.Color = shared.OriginalBoosterData[object].Color object.Transparency = shared.OriginalBoosterData[object].Transparency object.CastShadow = shared.OriginalBoosterData[object].CastShadow
+		if object:IsA("MeshPart") and shared.OriginalBoosterData[object].TextureID then object.TextureID = shared.OriginalBoosterData[object].TextureID end
+	elseif mode == 2 then object.Material = Enum.Material.SmoothPlastic object.Color = Color3.fromRGB(255, 255, 255) object.Transparency = 0 object.CastShadow = false if object:IsA("MeshPart") then object.TextureID = "" end
+	elseif mode == 3 then object.Transparency = 1 object.CastShadow = false end
+end
+
+function shared.ExecuteDeepCleanRefresh()
+	local mode = shared.CurrentBoosterMode
+	if shared.Mode4Active then
+		BlackScreen.Visible = true
+		pcall(function() game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.All, false) end)
+	else
+		BlackScreen.Visible = false
+		pcall(function() game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.All, true) end)
+	end
+	pcall(function()
+		if mode > 1 or shared.Mode4Active then settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 game:GetService("Lighting").GlobalShadows = false
+		else settings().Rendering.QualityLevel = Enum.QualityLevel.Automatic game:GetService("Lighting").GlobalShadows = true end
+	end)
+	local allObjects = game:GetService("Workspace"):GetDescendants()
+	for i = 1, #allObjects do local v = allObjects[i] if v then SetAssetVisibility(v, (mode == 1 and not shared.Mode4Active)) CleanObject(v) end end
+end
+
+local function UpdateMenuButtonVisuals()
+	for modeNum, button in pairs(ModeButtons) do
+		local stroke = button:FindFirstChildOfClass("UIStroke")
+		if modeNum == 4 then
+			if shared.Mode4Active then
+				button.BackgroundColor3 = Color3.fromRGB(0, 255, 150)
+				button.TextColor3 = Color3.fromRGB(10, 10, 12)
+				if stroke then stroke.Color = Color3.fromRGB(255, 255, 255) end
+			else
+				button.BackgroundColor3 = Color3.fromRGB(50, 52, 65)
+				button.TextColor3 = Color3.fromRGB(255, 255, 255)
+				if stroke then stroke.Color = Color3.fromRGB(255, 255, 255) end
+			end
+		else
+			if shared.CurrentBoosterMode == modeNum then
+				button.BackgroundColor3 = Color3.fromRGB(0, 255, 150)
+				button.TextColor3 = Color3.fromRGB(10, 10, 12)
+				if stroke then stroke.Color = Color3.fromRGB(255, 255, 255) end
+			else
+				button.BackgroundColor3 = Color3.fromRGB(50, 52, 65)
+				button.TextColor3 = Color3.fromRGB(255, 255, 255)
+				if stroke then stroke.Color = Color3.fromRGB(255, 255, 255) end
+			end
+		end
+	end
+end
+
+local function CreateModeButton(text, modeNum)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, -6, 0, 28)
+	btn.BackgroundColor3 = Color3.fromRGB(50, 52, 65) 
+	btn.Font = Enum.Font.GothamBold 
+	btn.TextSize = 11 
+	btn.TextColor3 = Color3.fromRGB(255, 255, 255) 
+	btn.Text = text 
+	btn.ZIndex = 65 
+	btn.Parent = ButtonScroll 
+	shared.ApplyCorner(btn, 5)
+	
+	local textStroke = Instance.new("UIStroke")
+	textStroke.Thickness = 0.5
+	textStroke.Color = Color3.fromRGB(255, 255, 255)
+	textStroke.Parent = btn
+
+	ModeButtons[modeNum] = btn
+
+	btn.MouseButton1Click:Connect(function()
+		if modeNum == 4 then shared.Mode4Active = not shared.Mode4Active else shared.CurrentBoosterMode = modeNum end
+		shared.ExecuteDeepCleanRefresh()
+		UpdateMenuButtonVisuals()
+	end)
+end
+
+CreateModeButton("MODE 1: RESET GRAFIS MAP", 1)
+CreateModeButton("MODE 2: MAP PUTIH POLOS", 2)
+CreateModeButton("MODE 3: SEMBUNYIKAN MAP", 3)
+CreateModeButton("MODE 4: FULL BLACK SCREEN", 4)
+UpdateMenuButtonVisuals()
+
+local function CreateBrightButton(text, exp)
+	local btn = Instance.new("TextButton")
+	btn.Font = Enum.Font.GothamBold 
+	btn.TextSize = 11 
+	btn.TextColor3 = Color3.fromRGB(255, 255, 255) 
+	btn.Text = text 
+	btn.BackgroundColor3 = Color3.fromRGB(60, 64, 80) 
+	btn.ZIndex = 65 
+	btn.Parent = BrightGrid 
+	shared.ApplyCorner(btn, 4)
+	
+	local textStroke = Instance.new("UIStroke")
+	textStroke.Thickness = 0.6
+	textStroke.Color = Color3.fromRGB(255, 255, 255)
+	textStroke.Parent = btn
+
+	btn.MouseButton1Click:Connect(function() game:GetService("Lighting").ExposureCompensation = exp end)
+end
+CreateBrightButton("GELAP", -2.5) CreateBrightButton("REDUP", -1.2) CreateBrightButton("BIASA", 0) CreateBrightButton("BRIGHT", 1.8)
+
+local UnloadBtn = Instance.new("TextButton")
+UnloadBtn.Size = UDim2.new(1, -6, 0, 24)
+UnloadBtn.BackgroundColor3 = Color3.fromRGB(120, 30, 30)
+UnloadBtn.TextColor3 = Color3.fromRGB(255, 220, 220)
+UnloadBtn.Text = "🛑 UNLOAD SCRIPT"
+UnloadBtn.Font = Enum.Font.GothamBold
+UnloadBtn.TextSize = 10
+UnloadBtn.ZIndex = 65
+UnloadBtn.Parent = ButtonScroll
+shared.ApplyCorner(UnloadBtn, 5)
+UnloadBtn.MouseButton1Click:Connect(function() Pop.Visible = true end)
+
+print("Bagian 4 Sukses Dimuat!")
+-- =========================================================================
+-- BAGIAN 5 dari 5: MONITOR SENSOR SINKRONISASI & PEMBONGKARAN (TAMAT)
+-- =========================================================================
+local MainWindow = shared.MainWindowGlobal
+local RightPanel = shared.RightPanelGlobal
+local ScreenGui = shared.BoosterScreenGui
+local MenuToggle = ScreenGui:FindFirstChild("MenuToggle")
+local CloseMainBtn = MainWindow:FindFirstChild("CloseMainWindowButton")
+local Pop = shared.PopG
+local ToggleStroke = shared.ToggleStrokeGlobal
+
+-- Fungsi Pembuat Kerangka Monitor Sensor Hardware di Panel Kanan
+local function BuildGraphBox(posY, componentColor, labelText)
+	local container = Instance.new("Frame")
+	container.Size = UDim2.new(1, -16, 0, 56)
+	container.Position = UDim2.new(0, 8, 0, posY)
+	container.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
+	container.ZIndex = 52
+	container.Parent = RightPanel
+	shared.ApplyCorner(container, 5)
+	shared.ApplySoftBorder(container, Color3.fromRGB(35, 35, 45), 1)
+	
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.new(1, -10, 0, 14)
+	lbl.Position = UDim2.new(0, 8, 0, 4)
+	lbl.BackgroundTransparency = 1
+	lbl.Font = Enum.Font.GothamBold
+	lbl.TextSize = 10 
+	lbl.TextColor3 = componentColor
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.Text = labelText .. ": Menganalisis..."
+	lbl.ZIndex = 53
+	lbl.Parent = container
+
+	local scroller = Instance.new("ScrollingFrame")
+	scroller.Size = UDim2.new(1, -12, 0, 30)
+	scroller.Position = UDim2.new(0, 6, 0, 20)
+	scroller.BackgroundTransparency = 1 
+	scroller.BorderSizePixel = 0
+	scroller.CanvasSize = UDim2.new(0, 0, 0, 0)
+	scroller.ScrollBarThickness = 0
+	scroller.ZIndex = 53
+	scroller.Parent = container
+
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 1) 
+	layout.Parent = scroller
+
+	return lbl, scroller
+end
+
+local Txt_FPS,  Box_FPS  = BuildGraphBox(4,   Color3.fromRGB(0, 255, 160), "🟢 FPS UTAMA")
+local Txt_PING, Box_PING = BuildGraphBox(63,  Color3.fromRGB(0, 200, 255), "🔵 PING")
+local Txt_RAM,  Box_RAM  = BuildGraphBox(122, Color3.fromRGB(255, 215, 0), "🟡 RAM")
+local Txt_CPU,  Box_CPU  = BuildGraphBox(181, Color3.fromRGB(255, 90, 50),  "🟠 CPU")
+
+local nodeIndexCounter = 0
+local graphNodes = { FPS = {}, PING = {}, RAM = {}, CPU = {} }
+
+local function PushNode(scroller, ratio, color, componentKey)
+	if not scroller or not scroller:IsDescendantOf(game) then return end
+	nodeIndexCounter = (nodeIndexCounter % 10000) + 1
+	
+	local bar = Instance.new("Frame")
+	bar.Name = string.format("Node_%05d", nodeIndexCounter)
+	bar.Size = UDim2.new(0, 2, ratio, 0)
+	bar.BackgroundColor3 = color
+	bar.BorderSizePixel = 0
+	bar.LayoutOrder = nodeIndexCounter
+	bar.ZIndex = 54
+	bar.Parent = scroller
+	
+	table.insert(graphNodes[componentKey], bar)
+	if #graphNodes[componentKey] > 65 then
+		local oldestBar = table.remove(graphNodes[componentKey], 1)
+		if oldestBar and oldestBar.Parent then oldestBar:Destroy() end
+	end
+end
+
+-- Ticker Sensor FPS Real-Time
+local fpsTicks, lastFpsCheck, activeFpsVal = 0, os.clock(), 60
+shared.B1 = game:GetService("RunService").RenderStepped:Connect(function()
+	fpsTicks = fpsTicks + 1 local now = os.clock()
+	if now - lastFpsCheck >= 0.5 then
+		activeFpsVal = math.round(fpsTicks / (now - lastFpsCheck)) fpsTicks = 0 lastFpsCheck = now
+		if Txt_FPS and Txt_FPS:IsDescendantOf(game) then Txt_FPS.Text = "🟢 FPS: " .. tostring(activeFpsVal) .. " FPS" end
+	end
+end)
+
+-- Ticker Sensor RAM, PING, CPU
+local lastHeartbeatTime, cpuPercentLoad = os.clock(), 15
+shared.B2 = game:GetService("RunService").Heartbeat:Connect(function()
+	local now = os.clock() local delta = now - lastHeartbeatTime lastHeartbeatTime = now
+	cpuPercentLoad = math.round(cpuPercentLoad * 0.7 + math.clamp(math.round(delta * 1200), 5, 99) * 0.3)
+	local ram = game:GetService("Stats"):GetTotalMemoryUsageMb()
+	local ping = math.round(game:GetService("Players").LocalPlayer:GetNetworkPing() * 1000)
+	if ping <= 0 then ping = math.round(game:GetService("Stats").Network.ServerPing:GetValue()) end
+	if Txt_PING and Txt_PING:IsDescendantOf(game) then Txt_PING.Text = "🔵 PING: " .. tostring(ping) .. " ms" end
+	if Txt_RAM and Txt_RAM:IsDescendantOf(game) then Txt_RAM.Text = "🟡 RAM: " .. tostring(math.round(ram)) .. " MB" end
+	if Txt_CPU and Txt_CPU:IsDescendantOf(game) then Txt_CPU.Text = "🟠 CPU: " .. tostring(cpuPercentLoad) .. "% Load" end
+end)
+
+-- Loop Pengisi Batang Grafik Performa
+task.spawn(function()
+	while task.wait(0.35) do
+		if not MainWindow or not MainWindow:IsDescendantOf(game) then break end
+		local ram = game:GetService("Stats"):GetTotalMemoryUsageMb()
+		local ping = math.round(game:GetService("Players").LocalPlayer:GetNetworkPing() * 1000)
+		if ping <= 0 then ping = math.round(game:GetService("Stats").Network.ServerPing:GetValue()) end
+		
+		PushNode(Box_FPS, math.clamp(activeFpsVal / 65, 0.05, 0.95), Color3.fromRGB(0, 255, 160), "FPS")
+		PushNode(Box_PING, math.clamp(ping / 450, 0.05, 0.95), Color3.fromRGB(0, 200, 255), "PING")
+		PushNode(Box_RAM, math.clamp(ram / 3200, 0.05, 0.95), Color3.fromRGB(255, 215, 0), "RAM")
+		PushNode(Box_CPU, math.clamp(cpuPercentLoad / 100, 0.05, 0.95), Color3.fromRGB(255, 90, 50), "CPU")
+	end
+end)
+
+-- Logika Utama Buka Tutup & Lampu Tombol Utama Melayang Menyala Pas Aktif
+local function UpdateToggleVisuals()
+	if MainWindow.Visible then
+		MenuToggle.Text = "⚡ BOOSTER ACTIVE"
+		MenuToggle.BackgroundColor3 = Color3.fromRGB(0, 255, 150)
+		MenuToggle.TextColor3 = Color3.fromRGB(10, 10, 12)
+		if ToggleStroke then ToggleStroke.Color = Color3.fromRGB(255, 255, 255) end
+	else
+		MenuToggle.Text = "⚡ FIX BOOSTER"
+		MenuToggle.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
+		MenuToggle.TextColor3 = Color3.fromRGB(0, 255, 150)
+		if ToggleStroke then ToggleStroke.Color = Color3.fromRGB(0, 255, 150) end
+	end
+end
+
+local function ToggleUI()
+	MainWindow.Visible = not MainWindow.Visible
+	UpdateToggleVisuals()
+end
+
+if MenuToggle then MenuToggle.MouseButton1Click:Connect(ToggleUI) end
+if CloseMainBtn then CloseMainBtn.MouseButton1Click:Connect(ToggleUI) end
+
+-- Sistem Draggable (Bisa Diseret)
+local function MakeDraggable(obj)
+	if not obj then return end
+	local dragging, inputStart, startPos
+	obj.InputBegan:Connect(function(input)
+		if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and game:GetService("UserInputService"):GetFocusedTextBox() == nil then
+			dragging = true inputStart = input.Position startPos = obj.Position
+			input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+		end
+	end)
+	obj.InputChanged:Connect(function(input)
+		if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) and dragging then
+			local delta = input.Position - inputStart
+			obj.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		end
+	end)
+end
+MakeDraggable(MenuToggle) 
+MakeDraggable(MainWindow)
+
+-- Eksekusi Penghancuran Skrip saat Tombol Pop-up IYA diklik
+local Children = Pop:GetChildren()
+local btnYes, btnNo
+for _, child in pairs(Children) do
+	if child:IsA("TextButton") then
+		if child.Text == "IYA" then btnYes = child elseif child.Text == "TIDAK" then btnNo = child end
+	end
+end
+
+if btnNo then btnNo.MouseButton1Click:Connect(function() Pop.Visible = false end) end
+if btnYes then
+	btnYes.MouseButton1Click:Connect(function()
+		Pop.Visible = false
+		if shared.B1 then shared.B1:Disconnect() end
+		if shared.B2 then shared.B2:Disconnect() end
+		shared.CurrentBoosterMode = 1 shared.Mode4Active = false
+		pcall(function() game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.All, true) end)
+		
+		for v, data in pairs(shared.OriginalBoosterData) do
+			pcall(function()
+				if v:IsA("BasePart") then v.Material = data.Material v.Color = data.Color v.Transparency = data.Transparency v.CastShadow = data.CastShadow
+				elseif v:IsA("Sky") then v.Parent = data.Parent
+				elseif v:IsA("Decal") or v:IsA("Texture") then v.Transparency = data.Transparency
+				else v.Enabled = data.Enabled end
+			end)
+		end
+		pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Automatic end)
+		game:GetService("Lighting").GlobalShadows = true game:GetService("Lighting").ExposureCompensation = 0
+		if ScreenGui then ScreenGui:Destroy() print("Skrip Berhasil Dihapus Sempurna!") end
+	end)
+end
+
+print("Seluruh Rangkaian Skrip Sukses Diperbaiki & Tamat Dimuat!")
