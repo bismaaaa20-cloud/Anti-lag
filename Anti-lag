@@ -1,586 +1,718 @@
--- =========================================================================
--- BAGIAN 1 dari 5: FONDASI UTAMA & ARSITEKTUR CORE
--- =========================================================================
-local Players = game:GetService("Players")
+-- ╔══════════════════════════════════════════════════════════════════╗
+-- ║          ULTIMATE FPS BOOSTER - POLOS TOTAL EDITION            ║
+-- ║          Blox Fruit Type Game — All Device Support             ║
+-- ║          PC / Laptop / Android / iOS                           ║
+-- ║          by: Software Optimizer + Modder Roblox               ║
+-- ╚══════════════════════════════════════════════════════════════════╝
+
+-- ══════════════════════════════════════════════════════════════════
+--                        SERVICES
+-- ══════════════════════════════════════════════════════════════════
+local RunService        = game:GetService("RunService")
+local Players           = game:GetService("Players")
+local Lighting          = game:GetService("Lighting")
+local Workspace         = game:GetService("Workspace")
+local UserInputService  = game:GetService("UserInputService")
+local StarterGui        = game:GetService("StarterGui")
+local ContentProvider   = game:GetService("ContentProvider")
+
 local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-local Lighting = game:GetService("Lighting")
-local Workspace = game:GetService("Workspace")
-local UIS = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local Stats = game:GetService("Stats")
+local Camera      = Workspace.CurrentCamera
 
--- Cleanup UI lama jika ada agar tidak menumpuk saat re-eksekusi
-local OldUI = PlayerGui:FindFirstChild("UltimateBoosterUI")
-if OldUI then OldUI:Destroy() end
+-- ══════════════════════════════════════════════════════════════════
+--                     KONFIGURASI MASTER
+-- ══════════════════════════════════════════════════════════════════
+local Config = {
 
--- State Management Global
-shared.CurrentBoosterMode = shared.CurrentBoosterMode or 1
-shared.Mode4Active = shared.Mode4Active or false
-shared.OriginalBoosterData = shared.OriginalBoosterData or {}
+    -- ┌─────────────────────────────────┐
+    -- │        RENDER SETTINGS          │
+    -- └─────────────────────────────────┘
+    QualityLevel            = 1,
+    MaxFPS                  = 60,
+    RenderDistance          = 200,
+    OceanRenderDist         = 100,
+    IslandRenderDist        = 150,
+    CameraFOV               = 70,
 
--- Fungsi Helper Visual Sudut Membulat (Corner)
-function shared.ApplyCorner(parent, radius)
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, radius)
-	corner.Parent = parent
-	return corner
+    -- ┌─────────────────────────────────┐
+    -- │     POLOS TOTAL - TEKSTUR       │
+    -- └─────────────────────────────────┘
+    ForceSmooth Plastic     = true,   -- Ganti semua material ke SmoothPlastic
+    DisableDecals           = true,   -- Sembunyikan semua Decal
+    DisableTextures         = true,   -- Sembunyikan semua Texture
+    ZeroReflectance         = true,   -- Matikan refleksi semua part
+    DisableSkybox           = true,   -- Ganti skybox jadi polos
+
+    -- ┌─────────────────────────────────┐
+    -- │     POLOS TOTAL - SHADOW        │
+    -- └─────────────────────────────────┘
+    DisableShadows          = true,
+    DisableGlobalShadow     = true,
+    DisableNPCShadow        = true,
+    DisableCharShadow       = false,  -- Shadow karakter sendiri (biarkan ON)
+
+    -- ┌─────────────────────────────────┐
+    -- │     LIGHTING & POST FX          │
+    -- └─────────────────────────────────┘
+    LightingTechnology      = "Compatibility", -- Mode paling ringan
+    FlatAmbient             = true,   -- Cahaya merata, tanpa shading
+    DisableBloom            = true,
+    DisableBlur             = true,
+    DisableSunRays          = true,
+    DisableDepthOfField     = true,
+    DisableColorCorrection  = true,
+    SimplifyAtmosphere      = true,
+    DisableSkyDetail        = true,
+
+    -- ┌─────────────────────────────────┐
+    -- │       PARTIKEL & EFEK           │
+    -- └─────────────────────────────────┘
+    DisableAllParticles     = true,   -- SEMUA partikel dimatikan
+    DisableCombatFX         = true,   -- Efek skill/jurus
+    DisableAura             = true,   -- Aura karakter
+    DisableTrails           = true,   -- Trail serangan
+    DisableSmoke            = true,
+    DisableFire             = true,
+    DisableSparks           = true,
+    DisableOtherPlayerFX    = true,   -- Efek visual pemain lain
+    KillAllLights           = true,   -- PointLight, SpotLight, SurfaceLight
+
+    -- ┌─────────────────────────────────┐
+    -- │       WORLD OPTIMIZER           │
+    -- └─────────────────────────────────┘
+    DisableWaterWave        = true,
+    DisableFoliage          = true,
+    DisableMeshDetail       = true,
+    StreamingOptimize       = true,
+
+    -- ┌─────────────────────────────────┐
+    -- │       MOBILE SETTINGS           │
+    -- └─────────────────────────────────┘
+    MobileMode              = true,
+    MobileExtraBoost        = true,
+    MobileRenderDist        = 80,
+
+    -- ┌─────────────────────────────────┐
+    -- │       HUD SETTINGS              │
+    -- └─────────────────────────────────┘
+    ShowFPS                 = true,
+    ShowPing                = true,
+    ShowStatus              = true,
+    HUDPosition             = UDim2.new(0, 10, 0, 10),
+
+    -- ┌─────────────────────────────────┐
+    -- │      MEMORY & PERFORMANCE       │
+    -- └─────────────────────────────────┘
+    MemoryCleanInterval     = 45,
+    YieldEveryNObjects      = 300,
+}
+
+-- ══════════════════════════════════════════════════════════════════
+--                        UTILITIES
+-- ══════════════════════════════════════════════════════════════════
+local totalOptimized = 0
+local boosterActive  = false
+
+local function SafeSet(obj, prop, val)
+    pcall(function() obj[prop] = val end)
 end
 
--- Fungsi Helper Visual Garis Tepi Halus (Border Stroke)
-function shared.ApplySoftBorder(parent, color, thickness)
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = color
-	stroke.Thickness = thickness
-	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-	stroke.Transparency = 0.3
-	stroke.Parent = parent
-	return stroke
+local function IsType(obj, t)
+    local ok, r = pcall(function() return obj:IsA(t) end)
+    return ok and r
 end
 
-print("Bagian 1 Sukses Dimuat!")
--- =========================================================================
--- BAGIAN 2 dari 5: ARSITEKTUR JENDELA & SCREEN GUI UTAMA
--- =========================================================================
-local PlayerGui = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
-
--- Pembuatan Container ScreenGui Utama
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "UltimateBoosterUI"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.DisplayOrder = 999999
-ScreenGui.Parent = PlayerGui
-shared.BoosterScreenGui = ScreenGui
-
--- Tombol Utama Melayang untuk Buka/Tutup Menu (MenuToggle)
-local MenuToggle = Instance.new("TextButton")
-MenuToggle.Name = "MenuToggle"
-MenuToggle.Size = UDim2.new(0, 130, 0, 32)
-MenuToggle.Position = UDim2.new(1, -145, 0, 140)
-MenuToggle.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
-MenuToggle.TextColor3 = Color3.fromRGB(0, 255, 150)
-MenuToggle.Text = "⚡ FIX BOOSTER"
-MenuToggle.Font = Enum.Font.GothamBold
-MenuToggle.TextSize = 11
-MenuToggle.ZIndex = 100 
-MenuToggle.Parent = ScreenGui
-shared.ApplyCorner(MenuToggle, 6)
-shared.ToggleStrokeGlobal = shared.ApplySoftBorder(MenuToggle, Color3.fromRGB(0, 255, 150), 1.2)
-
--- Bingkai Jendela Utama UI
-local MainWindow = Instance.new("Frame")
-MainWindow.Name = "MainContainer"
-MainWindow.Size = UDim2.new(0, 480, 0, 300) 
-MainWindow.Position = UDim2.new(0.5, -240, 0.5, -150)
-MainWindow.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
-MainWindow.BackgroundTransparency = 0.15 
-MainWindow.Visible = false 
-MainWindow.ZIndex = 50 
-MainWindow.Parent = ScreenGui
-shared.ApplyCorner(MainWindow, 8)
-shared.ApplySoftBorder(MainWindow, Color3.fromRGB(55, 55, 65), 1.5)
-shared.MainWindowGlobal = MainWindow
-
--- Judul Menu Utama
-local MainTitle = Instance.new("TextLabel")
-MainTitle.Size = UDim2.new(1, -70, 0, 28)
-MainTitle.Position = UDim2.new(0, 14, 0, 4)
-MainTitle.BackgroundTransparency = 1
-MainTitle.Font = Enum.Font.GothamBold
-MainTitle.TextSize = 13 
-MainTitle.TextColor3 = Color3.fromRGB(230, 235, 245)
-MainTitle.TextXAlignment = Enum.TextXAlignment.Left
-MainTitle.TextYAlignment = Enum.TextYAlignment.Center
-MainTitle.TextScaled = true 
-MainTitle.Text = "⚡ ULTIMATE PERFORMANCE BOOSTER & HARDWARE MONITOR"
-MainTitle.ZIndex = 51
-MainTitle.Parent = MainWindow
-
-local TitleLine = Instance.new("Frame")
-TitleLine.Size = UDim2.new(1, -28, 0, 1)
-TitleLine.Position = UDim2.new(0, 14, 0, 34)
-TitleLine.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
-TitleLine.BackgroundTransparency = 0.3
-TitleLine.ZIndex = 51
-TitleLine.Parent = MainWindow
-
--- Tombol "X" Pojok Kanan Atas
-local CloseMainBtn = Instance.new("TextButton")
-CloseMainBtn.Name = "CloseMainWindowButton"
-CloseMainBtn.Size = UDim2.new(0, 24, 0, 24)
-CloseMainBtn.Position = UDim2.new(1, -34, 0, 6) 
-CloseMainBtn.BackgroundTransparency = 1
-CloseMainBtn.Text = "X"
-CloseMainBtn.TextColor3 = Color3.fromRGB(255, 90, 90)
-CloseMainBtn.Font = Enum.Font.GothamBold
-CloseMainBtn.TextSize = 14
-CloseMainBtn.ZIndex = 60
-CloseMainBtn.Parent = MainWindow
-
-print("Bagian 2 Sukses Dimuat!")
--- =========================================================================
--- BAGIAN 3 dari 5: SUB-PANEL KONTROL KIRI, KANAN, & POP-UP
--- =========================================================================
-local MainWindow = shared.MainWindowGlobal
-local ScreenGui = shared.BoosterScreenGui
-
--- Pembuatan Sub-Panel Kiri (Tempat Tombol)
-local LeftPanel = Instance.new("Frame")
-LeftPanel.Size = UDim2.new(0, 190, 1, -48)
-LeftPanel.Position = UDim2.new(0, 14, 0, 42)
-LeftPanel.BackgroundColor3 = Color3.fromRGB(25, 25, 30) 
-LeftPanel.BackgroundTransparency = 0.2 
-LeftPanel.ZIndex = 52 
-LeftPanel.Parent = MainWindow
-shared.ApplyCorner(LeftPanel, 6)
-shared.ApplySoftBorder(LeftPanel, Color3.fromRGB(70, 70, 85), 1)
-
--- Pembuatan Sub-Panel Kanan (Tempat Grafik)
-local RightPanel = Instance.new("Frame")
-RightPanel.Size = UDim2.new(0, 250, 1, -48)
-RightPanel.Position = UDim2.new(0, 216, 0, 42)
-RightPanel.BackgroundColor3 = Color3.fromRGB(12, 12, 15)
-RightPanel.BackgroundTransparency = 0.2
-RightPanel.ZIndex = 52
-RightPanel.Parent = MainWindow
-shared.ApplyCorner(RightPanel, 6)
-shared.ApplySoftBorder(RightPanel, Color3.fromRGB(55, 55, 65), 1)
-shared.RightPanelGlobal = RightPanel
-
--- Sistem Scrolling untuk Tombol di Panel Kiri
-shared.ButtonScrollGlobal = Instance.new("ScrollingFrame")
-shared.ButtonScrollGlobal.Size = UDim2.new(1, -14, 1, -48)
-shared.ButtonScrollGlobal.Position = UDim2.new(0, 7, 0, 6)
-shared.ButtonScrollGlobal.BackgroundTransparency = 1
-shared.ButtonScrollGlobal.BorderSizePixel = 0
-shared.ButtonScrollGlobal.CanvasSize = UDim2.new(0, 0, 0, 160)
-shared.ButtonScrollGlobal.ScrollBarThickness = 3
-shared.ButtonScrollGlobal.ZIndex = 53
-shared.ButtonScrollGlobal.Parent = LeftPanel
-
-local ScrollLayout = Instance.new("UIListLayout")
-ScrollLayout.Padding = UDim.new(0, 6)
-ScrollLayout.SortOrder = Enum.SortOrder.LayoutOrder
-ScrollLayout.Parent = shared.ButtonScrollGlobal
-
-shared.BrightGridGlobal = Instance.new("Frame")
-shared.BrightGridGlobal.Size = UDim2.new(1, -14, 0, 36)
-shared.BrightGridGlobal.Position = UDim2.new(0, 7, 1, -40)
-shared.BrightGridGlobal.BackgroundTransparency = 1
-shared.BrightGridGlobal.ZIndex = 53
-shared.BrightGridGlobal.Parent = LeftPanel
-
-local GridLayout = Instance.new("UIGridLayout")
-GridLayout.CellSize = UDim2.new(0, 41, 0, 18)
-GridLayout.CellPadding = UDim2.new(0, 4, 0, 4)
-GridLayout.Parent = shared.BrightGridGlobal
-
--- Overlay Penutup Layar Hitam (Mode 4 AFK)
-shared.BlackScreenGlobal = Instance.new("Frame")
-shared.BlackScreenGlobal.Name = "AbsoluteAFKOverlay"
-shared.BlackScreenGlobal.Size = UDim2.new(1, 0, 1, 200)
-shared.BlackScreenGlobal.Position = UDim2.new(0, 0, 0, -100)
-shared.BlackScreenGlobal.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-shared.BlackScreenGlobal.Visible = false
-shared.BlackScreenGlobal.ZIndex = 45
-shared.BlackScreenGlobal.Parent = ScreenGui
-
--- Bingkai Pop-Up Dialog Box Konfirmasi Unload
-local Pop = Instance.new("Frame")
-Pop.Size = UDim2.new(0, 280, 0, 115)
-Pop.Position = UDim2.new(0.5, -140, 0.5, -57)
-Pop.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
-Pop.Visible = false
-Pop.ZIndex = 300
-Pop.Parent = ScreenGui
-shared.ApplyCorner(Pop, 6)
-shared.ApplySoftBorder(Pop, Color3.fromRGB(255, 75, 75), 1.2)
-shared.PopG = Pop
-
-local Txt = Instance.new("TextLabel")
-Txt.Size = UDim2.new(1, -20, 0, 45)
-Txt.Position = UDim2.new(0, 10, 0, 12)
-Txt.BackgroundTransparency = 1
-Txt.Text = "Apakah kamu yakin ingin menghapus skrip secara permanen dari game?"
-Txt.TextColor3 = Color3.fromRGB(255, 255, 255)
-Txt.Font = Enum.Font.GothamBold
-Txt.TextSize = 11
-Txt.TextWrapped = true
-Txt.ZIndex = 301
-Txt.Parent = Pop
-
-local Yes = Instance.new("TextButton")
-Yes.Size = UDim2.new(0, 110, 0, 28)
-Yes.Position = UDim2.new(0, 20, 1, -38)
-Yes.BackgroundColor3 = Color3.fromRGB(200, 40, 40)
-Yes.TextColor3 = Color3.fromRGB(255, 255, 255)
-Yes.Text = "IYA"
-Yes.Font = Enum.Font.GothamBold
-Yes.TextSize = 11
-Yes.ZIndex = 301
-Yes.Parent = Pop
-shared.ApplyCorner(Yes, 4)
-
-local No = Instance.new("TextButton")
-No.Size = UDim2.new(0, 110, 0, 28)
-No.Position = UDim2.new(1, -130, 1, -38)
-No.BackgroundColor3 = Color3.fromRGB(45, 50, 60)
-No.TextColor3 = Color3.fromRGB(255, 255, 255)
-No.Text = "TIDAK"
-No.Font = Enum.Font.GothamBold
-No.TextSize = 11
-No.ZIndex = 301
-No.Parent = Pop
-shared.ApplyCorner(No, 4)
-
-print("Bagian 3 Sukses Dimuat!")
--- =========================================================================
--- BAGIAN 4 dari 5: MESIN LAMPU NYALA & INTERAKSI MENU UTAMA
--- =========================================================================
-local ButtonScroll = shared.ButtonScrollGlobal
-local BrightGrid = shared.BrightGridGlobal
-local BlackScreen = shared.BlackScreenGlobal
-local Pop = shared.PopG
-
-local ModeButtons = {}
-
--- Fungsi Pemrosesan Grafis Aset Game
-local function SetAssetVisibility(obj, visible)
-	pcall(function()
-		if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Sparkles") or obj:IsA("Beam") then
-			if not shared.OriginalBoosterData[obj] then shared.OriginalBoosterData[obj] = {Enabled = obj.Enabled} end
-			obj.Enabled = visible
-		elseif obj:IsA("Decal") or obj:IsA("Texture") then
-			if not shared.OriginalBoosterData[obj] then shared.OriginalBoosterData[obj] = {Transparency = obj.Transparency} end
-			obj.Transparency = visible and shared.OriginalBoosterData[obj].Transparency or 1
-		elseif obj:IsA("Sky") then
-			if not visible then 
-				if obj.Parent ~= nil then shared.OriginalBoosterData[obj] = {Parent = obj.Parent} obj.Parent = nil end
-			else 
-				if shared.OriginalBoosterData[obj] and shared.OriginalBoosterData[obj].Parent then obj.Parent = shared.OriginalBoosterData[obj].Parent end 
-			end
-		end
-	end)
+local function IsMobile()
+    return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 end
 
-local function CleanObject(object)
-	local LocalPlayer = game:GetService("Players").LocalPlayer
-	if not object:IsA("BasePart") or (LocalPlayer.Character and object:IsDescendantOf(LocalPlayer.Character)) then return end
-	if not shared.OriginalBoosterData[object] then
-		shared.OriginalBoosterData[object] = {
-			Material = object.Material, Color = object.Color, Transparency = object.Transparency, CastShadow = object.CastShadow, TextureID = object:IsA("MeshPart") and object.TextureID or nil
-		}
-	end
-	local mode = shared.CurrentBoosterMode
-	if mode == 1 then
-		object.Material = shared.OriginalBoosterData[object].Material object.Color = shared.OriginalBoosterData[object].Color object.Transparency = shared.OriginalBoosterData[object].Transparency object.CastShadow = shared.OriginalBoosterData[object].CastShadow
-		if object:IsA("MeshPart") and shared.OriginalBoosterData[object].TextureID then object.TextureID = shared.OriginalBoosterData[object].TextureID end
-	elseif mode == 2 then object.Material = Enum.Material.SmoothPlastic object.Color = Color3.fromRGB(255, 255, 255) object.Transparency = 0 object.CastShadow = false if object:IsA("MeshPart") then object.TextureID = "" end
-	elseif mode == 3 then object.Transparency = 1 object.CastShadow = false end
+local function Log(msg)
+    print("[UltraBooster] " .. msg)
 end
 
-function shared.ExecuteDeepCleanRefresh()
-	local mode = shared.CurrentBoosterMode
-	if shared.Mode4Active then
-		BlackScreen.Visible = true
-		pcall(function() game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.All, false) end)
-	else
-		BlackScreen.Visible = false
-		pcall(function() game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.All, true) end)
-	end
-	pcall(function()
-		if mode > 1 or shared.Mode4Active then settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 game:GetService("Lighting").GlobalShadows = false
-		else settings().Rendering.QualityLevel = Enum.QualityLevel.Automatic game:GetService("Lighting").GlobalShadows = true end
-	end)
-	local allObjects = game:GetService("Workspace"):GetDescendants()
-	for i = 1, #allObjects do local v = allObjects[i] if v then SetAssetVisibility(v, (mode == 1 and not shared.Mode4Active)) CleanObject(v) end end
+-- ══════════════════════════════════════════════════════════════════
+--            MODULE 1 — RENDER QUALITY (PC + Mobile)
+-- ══════════════════════════════════════════════════════════════════
+local function M1_RenderQuality()
+    pcall(function()
+        settings().Rendering.QualityLevel          = Enum.QualityLevel.Level01
+        settings().Rendering.FrameRateManager      = Enum.FrameRateManagerMode.On
+        settings().Rendering.EagerBulkExecution    = true
+    end)
+    SafeSet(Camera, "FieldOfView", Config.CameraFOV)
+    Log("✅ [M1] Render Quality → Level 1 minimum")
 end
 
-local function UpdateMenuButtonVisuals()
-	for modeNum, button in pairs(ModeButtons) do
-		local stroke = button:FindFirstChildOfClass("UIStroke")
-		if modeNum == 4 then
-			if shared.Mode4Active then
-				button.BackgroundColor3 = Color3.fromRGB(0, 255, 150)
-				button.TextColor3 = Color3.fromRGB(10, 10, 12)
-				if stroke then stroke.Color = Color3.fromRGB(255, 255, 255) end
-			else
-				button.BackgroundColor3 = Color3.fromRGB(50, 52, 65)
-				button.TextColor3 = Color3.fromRGB(255, 255, 255)
-				if stroke then stroke.Color = Color3.fromRGB(255, 255, 255) end
-			end
-		else
-			if shared.CurrentBoosterMode == modeNum then
-				button.BackgroundColor3 = Color3.fromRGB(0, 255, 150)
-				button.TextColor3 = Color3.fromRGB(10, 10, 12)
-				if stroke then stroke.Color = Color3.fromRGB(255, 255, 255) end
-			else
-				button.BackgroundColor3 = Color3.fromRGB(50, 52, 65)
-				button.TextColor3 = Color3.fromRGB(255, 255, 255)
-				if stroke then stroke.Color = Color3.fromRGB(255, 255, 255) end
-			end
-		end
-	end
+-- ══════════════════════════════════════════════════════════════════
+--            MODULE 2 — LIGHTING POLOS TOTAL
+-- ══════════════════════════════════════════════════════════════════
+local function M2_LightingPolos()
+    -- Mode Compatibility = paling ringan, matikan future lighting
+    pcall(function()
+        Lighting.Technology = Enum.Technology.Compatibility
+    end)
+
+    SafeSet(Lighting, "GlobalShadows",  false)
+    SafeSet(Lighting, "FogEnd",         1500)
+    SafeSet(Lighting, "FogStart",       1400)
+
+    -- Flat Ambient = cahaya merata, tidak ada shading gelap
+    if Config.FlatAmbient then
+        SafeSet(Lighting, "Ambient",        Color3.new(1, 1, 1))
+        SafeSet(Lighting, "Brightness",     0)
+        SafeSet(Lighting, "OutdoorAmbient", Color3.new(1, 1, 1))
+    end
+
+    -- Skybox polos
+    if Config.DisableSkybox then
+        local sky = Lighting:FindFirstChildOfClass("Sky")
+        if sky then sky:Destroy() end
+    end
+
+    -- Atmosphere simpel
+    if Config.SimplifyAtmosphere then
+        local atmo = Lighting:FindFirstChildOfClass("Atmosphere")
+        if atmo then
+            SafeSet(atmo, "Density", 0)
+            SafeSet(atmo, "Offset",  0)
+            SafeSet(atmo, "Glare",   0)
+            SafeSet(atmo, "Haze",    0)
+        end
+    end
+
+    -- Hapus semua Post FX
+    for _, fx in pairs(Lighting:GetChildren()) do
+        pcall(function()
+            if IsType(fx, "BloomEffect")          and Config.DisableBloom           then fx:Destroy()
+            elseif IsType(fx, "BlurEffect")       and Config.DisableBlur            then fx:Destroy()
+            elseif IsType(fx, "SunRaysEffect")    and Config.DisableSunRays         then fx:Destroy()
+            elseif IsType(fx, "DepthOfFieldEffect") and Config.DisableDepthOfField  then fx:Destroy()
+            elseif IsType(fx, "ColorCorrectionEffect") and Config.DisableColorCorrection then fx:Destroy()
+            end
+        end)
+    end
+
+    -- Watch lighting children baru
+    Lighting.ChildAdded:Connect(function(child)
+        task.defer(function()
+            pcall(function()
+                if IsType(child, "BloomEffect") or IsType(child, "BlurEffect")
+                or IsType(child, "SunRaysEffect") or IsType(child, "DepthOfFieldEffect")
+                or IsType(child, "ColorCorrectionEffect") then
+                    child:Destroy()
+                end
+                if IsType(child, "Sky") and Config.DisableSkybox then
+                    child:Destroy()
+                end
+            end)
+        end)
+    end)
+
+    Log("✅ [M2] Lighting → Compatibility Mode, Flat Ambient, No Post FX")
 end
 
-local function CreateModeButton(text, modeNum)
-	local btn = Instance.new("TextButton")
-	btn.Size = UDim2.new(1, -6, 0, 28)
-	btn.BackgroundColor3 = Color3.fromRGB(50, 52, 65) 
-	btn.Font = Enum.Font.GothamBold 
-	btn.TextSize = 11 
-	btn.TextColor3 = Color3.fromRGB(255, 255, 255) 
-	btn.Text = text 
-	btn.ZIndex = 65 
-	btn.Parent = ButtonScroll 
-	shared.ApplyCorner(btn, 5)
-	
-	local textStroke = Instance.new("UIStroke")
-	textStroke.Thickness = 0.5
-	textStroke.Color = Color3.fromRGB(255, 255, 255)
-	textStroke.Parent = btn
+-- ══════════════════════════════════════════════════════════════════
+--            MODULE 3 — POLOS TOTAL (Tekstur & Material)
+-- ══════════════════════════════════════════════════════════════════
+local function M3_ApplyPolosToObject(obj)
+    pcall(function()
+        -- Ganti material ke SmoothPlastic
+        if Config.ForceSmoothPlastic and IsType(obj, "BasePart") then
+            obj.Material    = Enum.Material.SmoothPlastic
+            obj.Reflectance = 0
+            obj.CastShadow  = false
+        end
 
-	ModeButtons[modeNum] = btn
+        -- Sembunyikan Decal
+        if Config.DisableDecals and IsType(obj, "Decal") then
+            obj.Transparency = 1
+        end
 
-	btn.MouseButton1Click:Connect(function()
-		if modeNum == 4 then shared.Mode4Active = not shared.Mode4Active else shared.CurrentBoosterMode = modeNum end
-		shared.ExecuteDeepCleanRefresh()
-		UpdateMenuButtonVisuals()
-	end)
+        -- Sembunyikan Texture
+        if Config.DisableTextures and IsType(obj, "Texture") then
+            obj.Transparency = 1
+        end
+
+        -- Mesh detail minimum
+        if Config.DisableMeshDetail and IsType(obj, "SpecialMesh") then
+            SafeSet(obj, "LOD", Enum.MeshPartDetailLevel.Disabled)
+        end
+
+        -- MeshPart RenderFidelity = Automatic (auto LOD)
+        if IsType(obj, "MeshPart") then
+            SafeSet(obj, "RenderFidelity", Enum.RenderFidelity.Automatic)
+            if Config.DisableShadows then
+                obj.CastShadow = false
+            end
+        end
+    end)
 end
 
-CreateModeButton("MODE 1: RESET GRAFIS MAP", 1)
-CreateModeButton("MODE 2: MAP PUTIH POLOS", 2)
-CreateModeButton("MODE 3: SEMBUNYIKAN MAP", 3)
-CreateModeButton("MODE 4: FULL BLACK SCREEN", 4)
-UpdateMenuButtonVisuals()
+-- ══════════════════════════════════════════════════════════════════
+--            MODULE 4 — PARTIKEL & EFEK POLOS TOTAL
+-- ══════════════════════════════════════════════════════════════════
+local function M4_KillFXOnObject(obj)
+    pcall(function()
+        -- Partikel
+        if IsType(obj, "ParticleEmitter") then
+            obj.Enabled  = false
+            obj.Rate     = 0
+            obj.Lifetime = NumberRange.new(0, 0)
+        end
 
-local function CreateBrightButton(text, exp)
-	local btn = Instance.new("TextButton")
-	btn.Font = Enum.Font.GothamBold 
-	btn.TextSize = 11 
-	btn.TextColor3 = Color3.fromRGB(255, 255, 255) 
-	btn.Text = text 
-	btn.BackgroundColor3 = Color3.fromRGB(60, 64, 80) 
-	btn.ZIndex = 65 
-	btn.Parent = BrightGrid 
-	shared.ApplyCorner(btn, 4)
-	
-	local textStroke = Instance.new("UIStroke")
-	textStroke.Thickness = 0.6
-	textStroke.Color = Color3.fromRGB(255, 255, 255)
-	textStroke.Parent = btn
+        -- Trail
+        if Config.DisableTrails and IsType(obj, "Trail") then
+            obj.Enabled = false
+        end
 
-	btn.MouseButton1Click:Connect(function() game:GetService("Lighting").ExposureCompensation = exp end)
-end
-CreateBrightButton("GELAP", -2.5) CreateBrightButton("REDUP", -1.2) CreateBrightButton("BIASA", 0) CreateBrightButton("BRIGHT", 1.8)
+        -- Elemen alam
+        if Config.DisableSmoke  and IsType(obj, "Smoke")    then obj.Enabled = false end
+        if Config.DisableFire   and IsType(obj, "Fire")     then obj.Enabled = false end
+        if Config.DisableSparks and IsType(obj, "Sparkles") then obj.Enabled = false end
 
-local UnloadBtn = Instance.new("TextButton")
-UnloadBtn.Size = UDim2.new(1, -6, 0, 24)
-UnloadBtn.BackgroundColor3 = Color3.fromRGB(120, 30, 30)
-UnloadBtn.TextColor3 = Color3.fromRGB(255, 220, 220)
-UnloadBtn.Text = "🛑 UNLOAD SCRIPT"
-UnloadBtn.Font = Enum.Font.GothamBold
-UnloadBtn.TextSize = 10
-UnloadBtn.ZIndex = 65
-UnloadBtn.Parent = ButtonScroll
-shared.ApplyCorner(UnloadBtn, 5)
-UnloadBtn.MouseButton1Click:Connect(function() Pop.Visible = true end)
+        -- Lampu (PointLight dll bikin GPU spike saat combat)
+        if Config.KillAllLights then
+            if IsType(obj, "PointLight") or IsType(obj, "SpotLight") or IsType(obj, "SurfaceLight") then
+                obj.Brightness = 0
+                obj.Range      = 0
+            end
+        end
 
-print("Bagian 4 Sukses Dimuat!")
--- =========================================================================
--- BAGIAN 5 dari 5: MONITOR SENSOR SINKRONISASI & PEMBONGKARAN (TAMAT)
--- =========================================================================
-local MainWindow = shared.MainWindowGlobal
-local RightPanel = shared.RightPanelGlobal
-local ScreenGui = shared.BoosterScreenGui
-local MenuToggle = ScreenGui:FindFirstChild("MenuToggle")
-local CloseMainBtn = MainWindow:FindFirstChild("CloseMainWindowButton")
-local Pop = shared.PopG
-local ToggleStroke = shared.ToggleStrokeGlobal
+        -- Aura & Glow
+        if Config.DisableAura then
+            local name = (obj.Name or ""):lower()
+            if name:find("aura") or name:find("glow") or name:find("shine") or name:find("effect") then
+                if IsType(obj, "ParticleEmitter") then
+                    obj.Enabled = false
+                    obj.Rate    = 0
+                elseif IsType(obj, "SelectionBox") then
+                    obj:Destroy()
+                elseif IsType(obj, "BillboardGui") then
+                    obj.Enabled = false
+                end
+            end
+        end
 
--- Fungsi Pembuat Kerangka Monitor Sensor Hardware di Panel Kanan
-local function BuildGraphBox(posY, componentColor, labelText)
-	local container = Instance.new("Frame")
-	container.Size = UDim2.new(1, -16, 0, 56)
-	container.Position = UDim2.new(0, 8, 0, posY)
-	container.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
-	container.ZIndex = 52
-	container.Parent = RightPanel
-	shared.ApplyCorner(container, 5)
-	shared.ApplySoftBorder(container, Color3.fromRGB(35, 35, 45), 1)
-	
-	local lbl = Instance.new("TextLabel")
-	lbl.Size = UDim2.new(1, -10, 0, 14)
-	lbl.Position = UDim2.new(0, 8, 0, 4)
-	lbl.BackgroundTransparency = 1
-	lbl.Font = Enum.Font.GothamBold
-	lbl.TextSize = 10 
-	lbl.TextColor3 = componentColor
-	lbl.TextXAlignment = Enum.TextXAlignment.Left
-	lbl.Text = labelText .. ": Menganalisis..."
-	lbl.ZIndex = 53
-	lbl.Parent = container
-
-	local scroller = Instance.new("ScrollingFrame")
-	scroller.Size = UDim2.new(1, -12, 0, 30)
-	scroller.Position = UDim2.new(0, 6, 0, 20)
-	scroller.BackgroundTransparency = 1 
-	scroller.BorderSizePixel = 0
-	scroller.CanvasSize = UDim2.new(0, 0, 0, 0)
-	scroller.ScrollBarThickness = 0
-	scroller.ZIndex = 53
-	scroller.Parent = container
-
-	local layout = Instance.new("UIListLayout")
-	layout.FillDirection = Enum.FillDirection.Horizontal
-	layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
-	layout.SortOrder = Enum.SortOrder.LayoutOrder
-	layout.Padding = UDim.new(0, 1) 
-	layout.Parent = scroller
-
-	return lbl, scroller
+        -- SelectionBox (highlight musuh/item)
+        if IsType(obj, "SelectionBox") then
+            SafeSet(obj, "SurfaceTransparency", 1)
+            SafeSet(obj, "LineThickness", 0)
+        end
+    end)
 end
 
-local Txt_FPS,  Box_FPS  = BuildGraphBox(4,   Color3.fromRGB(0, 255, 160), "🟢 FPS UTAMA")
-local Txt_PING, Box_PING = BuildGraphBox(63,  Color3.fromRGB(0, 200, 255), "🔵 PING")
-local Txt_RAM,  Box_RAM  = BuildGraphBox(122, Color3.fromRGB(255, 215, 0), "🟡 RAM")
-local Txt_CPU,  Box_CPU  = BuildGraphBox(181, Color3.fromRGB(255, 90, 50),  "🟠 CPU")
+-- ══════════════════════════════════════════════════════════════════
+--            MODULE 5 — SCAN SELURUH WORKSPACE
+-- ══════════════════════════════════════════════════════════════════
+local function M5_ScanWorkspace()
+    local count = 0
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        M3_ApplyPolosToObject(obj)
+        M4_KillFXOnObject(obj)
+        count += 1
+        totalOptimized += 1
 
-local nodeIndexCounter = 0
-local graphNodes = { FPS = {}, PING = {}, RAM = {}, CPU = {} }
-
-local function PushNode(scroller, ratio, color, componentKey)
-	if not scroller or not scroller:IsDescendantOf(game) then return end
-	nodeIndexCounter = (nodeIndexCounter % 10000) + 1
-	
-	local bar = Instance.new("Frame")
-	bar.Name = string.format("Node_%05d", nodeIndexCounter)
-	bar.Size = UDim2.new(0, 2, ratio, 0)
-	bar.BackgroundColor3 = color
-	bar.BorderSizePixel = 0
-	bar.LayoutOrder = nodeIndexCounter
-	bar.ZIndex = 54
-	bar.Parent = scroller
-	
-	table.insert(graphNodes[componentKey], bar)
-	if #graphNodes[componentKey] > 65 then
-		local oldestBar = table.remove(graphNodes[componentKey], 1)
-		if oldestBar and oldestBar.Parent then oldestBar:Destroy() end
-	end
+        -- Yield agar tidak freeze
+        if count % Config.YieldEveryNObjects == 0 then
+            task.wait()
+        end
+    end
+    Log("✅ [M5] Workspace scan selesai — " .. count .. " objects dioptimasi")
 end
 
--- Ticker Sensor FPS Real-Time
-local fpsTicks, lastFpsCheck, activeFpsVal = 0, os.clock(), 60
-shared.B1 = game:GetService("RunService").RenderStepped:Connect(function()
-	fpsTicks = fpsTicks + 1 local now = os.clock()
-	if now - lastFpsCheck >= 0.5 then
-		activeFpsVal = math.round(fpsTicks / (now - lastFpsCheck)) fpsTicks = 0 lastFpsCheck = now
-		if Txt_FPS and Txt_FPS:IsDescendantOf(game) then Txt_FPS.Text = "🟢 FPS: " .. tostring(activeFpsVal) .. " FPS" end
-	end
-end)
+-- ══════════════════════════════════════════════════════════════════
+--            MODULE 6 — OCEAN & WORLD OPTIMIZER
+-- ══════════════════════════════════════════════════════════════════
+local function M6_WorldOptimizer()
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        pcall(function()
+            if IsType(obj, "BasePart") then
+                local name = (obj.Name or ""):lower()
 
--- Ticker Sensor RAM, PING, CPU
-local lastHeartbeatTime, cpuPercentLoad = os.clock(), 15
-shared.B2 = game:GetService("RunService").Heartbeat:Connect(function()
-	local now = os.clock() local delta = now - lastHeartbeatTime lastHeartbeatTime = now
-	cpuPercentLoad = math.round(cpuPercentLoad * 0.7 + math.clamp(math.round(delta * 1200), 5, 99) * 0.3)
-	local ram = game:GetService("Stats"):GetTotalMemoryUsageMb()
-	local ping = math.round(game:GetService("Players").LocalPlayer:GetNetworkPing() * 1000)
-	if ping <= 0 then ping = math.round(game:GetService("Stats").Network.ServerPing:GetValue()) end
-	if Txt_PING and Txt_PING:IsDescendantOf(game) then Txt_PING.Text = "🔵 PING: " .. tostring(ping) .. " ms" end
-	if Txt_RAM and Txt_RAM:IsDescendantOf(game) then Txt_RAM.Text = "🟡 RAM: " .. tostring(math.round(ram)) .. " MB" end
-	if Txt_CPU and Txt_CPU:IsDescendantOf(game) then Txt_CPU.Text = "🟠 CPU: " .. tostring(cpuPercentLoad) .. "% Load" end
-end)
+                -- Air/Laut
+                if name:find("water") or name:find("ocean") or name:find("sea") or name:find("wave") then
+                    obj.CastShadow = false
+                    obj.Reflectance = 0
+                    if Config.DisableWaterWave then
+                        for _, c in pairs(obj:GetChildren()) do
+                            if IsType(c, "SpecialMesh") then
+                                SafeSet(c, "LOD", Enum.MeshPartDetailLevel.Disabled)
+                            end
+                        end
+                    end
+                end
 
--- Loop Pengisi Batang Grafik Performa
+                -- Foliage
+                if Config.DisableFoliage then
+                    if name:find("grass") or name:find("leaf") or name:find("bush")
+                    or name:find("tree") or name:find("foliage") then
+                        obj.CastShadow = false
+                        obj.Material   = Enum.Material.SmoothPlastic
+                    end
+                end
+            end
+        end)
+    end
+    Log("✅ [M6] Ocean & World optimized")
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--            MODULE 7 — NPC & ENEMY OPTIMIZER
+-- ══════════════════════════════════════════════════════════════════
+local function M7_NPCOptimizer()
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        pcall(function()
+            if IsType(obj, "Model") then
+                local humanoid = obj:FindFirstChildOfClass("Humanoid")
+                if humanoid and obj ~= LocalPlayer.Character then
+                    -- Shadow NPC
+                    if Config.DisableNPCShadow then
+                        for _, part in pairs(obj:GetDescendants()) do
+                            if IsType(part, "BasePart") then
+                                part.CastShadow = false
+                            end
+                            -- FX NPC
+                            M4_KillFXOnObject(part)
+                        end
+                    end
+                end
+            end
+        end)
+    end
+    Log("✅ [M7] NPC/Enemy optimized")
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--            MODULE 8 — OTHER PLAYER FX KILLER
+--            (Efek jurus pemain lain yang paling berat!)
+-- ══════════════════════════════════════════════════════════════════
+local function M8_KillOtherPlayerFX()
+    if not Config.DisableOtherPlayerFX then return end
+
+    local function cleanPlayer(player)
+        if player == LocalPlayer then return end
+        if player.Character then
+            for _, obj in pairs(player.Character:GetDescendants()) do
+                M4_KillFXOnObject(obj)
+                pcall(function()
+                    if IsType(obj, "BasePart") then
+                        obj.CastShadow = false
+                    end
+                end)
+            end
+        end
+    end
+
+    -- Bersihkan semua player yang sudah ada
+    for _, p in pairs(Players:GetPlayers()) do
+        cleanPlayer(p)
+    end
+
+    -- Watch player baru join
+    Players.PlayerAdded:Connect(function(player)
+        player.CharacterAdded:Connect(function(char)
+            task.wait(1)
+            for _, obj in pairs(char:GetDescendants()) do
+                M4_KillFXOnObject(obj)
+            end
+            char.DescendantAdded:Connect(function(obj)
+                task.defer(function()
+                    M4_KillFXOnObject(obj)
+                end)
+            end)
+        end)
+    end)
+
+    Log("✅ [M8] Other player FX killed")
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--            MODULE 9 — CHARACTER OPTIMIZER
+-- ══════════════════════════════════════════════════════════════════
+local function M9_CharacterOptimizer(character)
+    if not character then return end
+    task.wait(1)
+
+    for _, obj in pairs(character:GetDescendants()) do
+        pcall(function()
+            -- Matikan aura/glow karakter sendiri
+            if Config.DisableAura then
+                local name = (obj.Name or ""):lower()
+                if name:find("aura") or name:find("glow") then
+                    if IsType(obj, "ParticleEmitter") then
+                        obj.Rate    = 0
+                        obj.Enabled = false
+                    end
+                end
+            end
+            if Config.DisableTrails and IsType(obj, "Trail") then
+                obj.Enabled = false
+            end
+            -- Shadow karakter sendiri tetap
+            if Config.DisableCharShadow and IsType(obj, "BasePart") then
+                obj.CastShadow = false
+            end
+        end)
+    end
+
+    -- Watch objek baru pada karakter (spawn skill)
+    character.DescendantAdded:Connect(function(obj)
+        task.defer(function()
+            M4_KillFXOnObject(obj)
+        end)
+    end)
+
+    Log("✅ [M9] Character optimized")
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--            MODULE 10 — REAL-TIME AUTO WATCHER
+--            (Tangkap efek baru yang spawn saat combat)
+-- ══════════════════════════════════════════════════════════════════
+local function M10_RealTimeWatcher()
+    Workspace.DescendantAdded:Connect(function(obj)
+        task.defer(function()
+            M3_ApplyPolosToObject(obj)
+            M4_KillFXOnObject(obj)
+        end)
+    end)
+
+    -- Watch Lighting juga
+    Lighting.DescendantAdded:Connect(function(child)
+        task.defer(function()
+            pcall(function()
+                if IsType(child, "BloomEffect") or IsType(child, "BlurEffect")
+                or IsType(child, "SunRaysEffect") or IsType(child, "ColorCorrectionEffect")
+                or IsType(child, "DepthOfFieldEffect") then
+                    child:Destroy()
+                end
+            end)
+        end)
+    end)
+
+    Log("✅ [M10] Real-time watcher aktif — semua object baru langsung dioptimasi")
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--            MODULE 11 — MOBILE EXTRA BOOST
+-- ══════════════════════════════════════════════════════════════════
+local function M11_MobileBoost()
+    if not (Config.MobileMode and IsMobile()) then
+        Log("🖥️ [M11] Mode PC/Laptop terdeteksi")
+        return
+    end
+
+    Log("📱 [M11] Mobile terdeteksi — Extra Boost ON!")
+
+    -- Kurangi semua jarak render
+    Config.RenderDistance  = Config.MobileRenderDist
+    Config.OceanRenderDist = 60
+    Config.IslandRenderDist= 100
+
+    -- Paksa semua FX mati
+    Config.DisableAllParticles  = true
+    Config.DisableCombatFX      = true
+    Config.DisableAura          = true
+    Config.DisableTrails        = true
+    Config.KillAllLights        = true
+    Config.DisableWaterWave     = true
+    Config.DisableFoliage       = true
+    Config.ForceSmoothPlastic   = true
+
+    -- Extra render tweak mobile
+    pcall(function()
+        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+        settings().Rendering.EagerBulkExecution = true
+    end)
+
+    Log("📱 [M11] Mobile boost applied — semua FX dimatikan maksimal!")
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--            MODULE 12 — MEMORY CLEANER
+-- ══════════════════════════════════════════════════════════════════
+local function M12_MemoryCleaner()
+    task.spawn(function()
+        while true do
+            task.wait(Config.MemoryCleanInterval)
+            pcall(function()
+                collectgarbage("collect")
+            end)
+            Log("🧹 [M12] Memory cleaned")
+        end
+    end)
+    Log("✅ [M12] Memory cleaner aktif (setiap " .. Config.MemoryCleanInterval .. " detik)")
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--            MODULE 13 — ULTIMATE HUD (FPS + PING + STATUS)
+-- ══════════════════════════════════════════════════════════════════
+local function M13_CreateHUD()
+    local old = LocalPlayer.PlayerGui:FindFirstChild("UltraBoosterHUD")
+    if old then old:Destroy() end
+
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name             = "UltraBoosterHUD"
+    ScreenGui.ResetOnSpawn     = false
+    ScreenGui.DisplayOrder     = 9999
+    ScreenGui.IgnoreGuiInset   = true
+    ScreenGui.Parent           = LocalPlayer.PlayerGui
+
+    -- Main Frame
+    local Frame = Instance.new("Frame")
+    Frame.Size                 = UDim2.new(0, 185, 0, 105)
+    Frame.Position             = Config.HUDPosition
+    Frame.BackgroundColor3     = Color3.fromRGB(8, 8, 8)
+    Frame.BackgroundTransparency = 0.3
+    Frame.BorderSizePixel      = 0
+    Frame.Parent               = ScreenGui
+
+    Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 10)
+
+    -- Border stroke
+    local Stroke = Instance.new("UIStroke")
+    Stroke.Color     = Color3.fromRGB(0, 210, 255)
+    Stroke.Thickness = 1.5
+    Stroke.Parent    = Frame
+
+    -- Padding
+    local Pad = Instance.new("UIPadding")
+    Pad.PaddingLeft   = UDim.new(0, 8)
+    Pad.PaddingRight  = UDim.new(0, 8)
+    Pad.PaddingTop    = UDim.new(0, 6)
+    Pad.Parent        = Frame
+
+    -- Layout
+    local Layout = Instance.new("UIListLayout")
+    Layout.SortOrder  = Enum.SortOrder.LayoutOrder
+    Layout.Padding    = UDim.new(0, 2)
+    Layout.Parent     = Frame
+
+    -- Helper buat label
+    local function MakeLabel(text, color, order)
+        local lbl = Instance.new("TextLabel")
+        lbl.Size                = UDim2.new(1, 0, 0, 26)
+        lbl.BackgroundTransparency = 1
+        lbl.Text                = text
+        lbl.TextColor3          = color or Color3.new(1,1,1)
+        lbl.TextScaled          = true
+        lbl.Font                = Enum.Font.GothamBold
+        lbl.TextXAlignment      = Enum.TextXAlignment.Left
+        lbl.LayoutOrder         = order or 1
+        lbl.Parent              = Frame
+        return lbl
+    end
+
+    local TitleLbl  = MakeLabel("⚡ ULTRA BOOSTER ON", Color3.fromRGB(0, 210, 255), 1)
+    local FPSLbl    = MakeLabel("FPS  : --",           Color3.fromRGB(255, 255, 255), 2)
+    local PingLbl   = MakeLabel("PING : --ms",         Color3.fromRGB(200, 200, 200), 3)
+    local StatLbl   = MakeLabel("MODE : " .. (IsMobile() and "📱 MOBILE" or "🖥️ PC"), Color3.fromRGB(150,150,150), 4)
+
+    -- FPS Counter
+    local lastTime = tick()
+    local frames   = 0
+
+    RunService.RenderStepped:Connect(function()
+        frames += 1
+        local now = tick()
+        if now - lastTime >= 0.5 then
+            local fps = math.floor(frames / (now - lastTime))
+            frames    = 0
+            lastTime  = now
+
+            FPSLbl.Text = "FPS  : " .. fps
+
+            if fps >= 50 then
+                FPSLbl.TextColor3 = Color3.fromRGB(0, 255, 100)
+            elseif fps >= 30 then
+                FPSLbl.TextColor3 = Color3.fromRGB(255, 200, 0)
+            else
+                FPSLbl.TextColor3 = Color3.fromRGB(255, 60, 60)
+            end
+        end
+    end)
+
+    -- Ping Counter
+    if Config.ShowPing then
+        task.spawn(function()
+            while task.wait(2) do
+                pcall(function()
+                    local ping = math.floor(LocalPlayer:GetNetworkPing() * 1000)
+                    PingLbl.Text = "PING : " .. ping .. "ms"
+
+                    if ping < 100 then
+                        PingLbl.TextColor3 = Color3.fromRGB(0, 255, 100)
+                    elseif ping < 200 then
+                        PingLbl.TextColor3 = Color3.fromRGB(255, 200, 0)
+                    else
+                        PingLbl.TextColor3 = Color3.fromRGB(255, 60, 60)
+                    end
+                end)
+            end
+        end)
+    end
+
+    Log("✅ [M13] HUD aktif — FPS + Ping + Status")
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--            MODULE 14 — CHARACTER RESPAWN HANDLER
+-- ══════════════════════════════════════════════════════════════════
+local function M14_CharacterHandler()
+    LocalPlayer.CharacterAdded:Connect(function(char)
+        M9_CharacterOptimizer(char)
+    end)
+    if LocalPlayer.Character then
+        M9_CharacterOptimizer(LocalPlayer.Character)
+    end
+    Log("✅ [M14] Character respawn handler aktif")
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--            MODULE 15 — STREAMING OPTIMIZER
+--            (Open World seperti Blox Fruit butuh ini!)
+-- ══════════════════════════════════════════════════════════════════
+local function M15_StreamingOptimizer()
+    if not Config.StreamingOptimize then return end
+    pcall(function()
+        -- Note: StreamingEnabled harus di-set dari Server/Studio
+        -- Script ini mengoptimasi sisi client
+        Workspace.StreamingMinRadius    = 64
+        Workspace.StreamingTargetRadius = 128
+    end)
+    Log("✅ [M15] Streaming optimizer applied")
+end
+
+-- ══════════════════════════════════════════════════════════════════
+--                      MAIN EXECUTION
+-- ══════════════════════════════════════════════════════════════════
+print("╔══════════════════════════════════════════════════════╗")
+print("║        ULTRA BOOSTER - POLOS TOTAL EDITION          ║")
+print("║        Initializing all 15 modules...               ║")
+print("╚══════════════════════════════════════════════════════╝")
+
+-- Urutan eksekusi penting!
+M11_MobileBoost()       -- Deteksi device dulu
+M1_RenderQuality()      -- Render settings
+M2_LightingPolos()      -- Lighting polos total
+M13_CreateHUD()         -- HUD (tampil dulu supaya user lihat progress)
+
+-- Scan berat dijalankan di background
 task.spawn(function()
-	while task.wait(0.35) do
-		if not MainWindow or not MainWindow:IsDescendantOf(game) then break end
-		local ram = game:GetService("Stats"):GetTotalMemoryUsageMb()
-		local ping = math.round(game:GetService("Players").LocalPlayer:GetNetworkPing() * 1000)
-		if ping <= 0 then ping = math.round(game:GetService("Stats").Network.ServerPing:GetValue()) end
-		
-		PushNode(Box_FPS, math.clamp(activeFpsVal / 65, 0.05, 0.95), Color3.fromRGB(0, 255, 160), "FPS")
-		PushNode(Box_PING, math.clamp(ping / 450, 0.05, 0.95), Color3.fromRGB(0, 200, 255), "PING")
-		PushNode(Box_RAM, math.clamp(ram / 3200, 0.05, 0.95), Color3.fromRGB(255, 215, 0), "RAM")
-		PushNode(Box_CPU, math.clamp(cpuPercentLoad / 100, 0.05, 0.95), Color3.fromRGB(255, 90, 50), "CPU")
-	end
+    M5_ScanWorkspace()  -- Scan + polos semua object
+    M6_WorldOptimizer() -- Ocean & world
+    M7_NPCOptimizer()   -- NPC/Enemy
+    M8_KillOtherPlayerFX() -- Efek player lain
+
+    -- Setelah scan selesai
+    M10_RealTimeWatcher()  -- Watch object baru
+    M12_MemoryCleaner()    -- Memory cleaner
+    M15_StreamingOptimizer()
+
+    print("╔══════════════════════════════════════════════════════╗")
+    print("║   ✅ SEMUA 15 MODULE AKTIF — POLOS TOTAL ON!        ║")
+    print("║   Total objects optimized: " .. totalOptimized .. "              ║")
+    print("╚══════════════════════════════════════════════════════╝")
 end)
 
--- Logika Utama Buka Tutup & Lampu Tombol Utama Melayang Menyala Pas Aktif
-local function UpdateToggleVisuals()
-	if MainWindow.Visible then
-		MenuToggle.Text = "⚡ BOOSTER ACTIVE"
-		MenuToggle.BackgroundColor3 = Color3.fromRGB(0, 255, 150)
-		MenuToggle.TextColor3 = Color3.fromRGB(10, 10, 12)
-		if ToggleStroke then ToggleStroke.Color = Color3.fromRGB(255, 255, 255) end
-	else
-		MenuToggle.Text = "⚡ FIX BOOSTER"
-		MenuToggle.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
-		MenuToggle.TextColor3 = Color3.fromRGB(0, 255, 150)
-		if ToggleStroke then ToggleStroke.Color = Color3.fromRGB(0, 255, 150) end
-	end
-end
-
-local function ToggleUI()
-	MainWindow.Visible = not MainWindow.Visible
-	UpdateToggleVisuals()
-end
-
-if MenuToggle then MenuToggle.MouseButton1Click:Connect(ToggleUI) end
-if CloseMainBtn then CloseMainBtn.MouseButton1Click:Connect(ToggleUI) end
-
--- Sistem Draggable (Bisa Diseret)
-local function MakeDraggable(obj)
-	if not obj then return end
-	local dragging, inputStart, startPos
-	obj.InputBegan:Connect(function(input)
-		if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and game:GetService("UserInputService"):GetFocusedTextBox() == nil then
-			dragging = true inputStart = input.Position startPos = obj.Position
-			input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
-		end
-	end)
-	obj.InputChanged:Connect(function(input)
-		if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) and dragging then
-			local delta = input.Position - inputStart
-			obj.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-		end
-	end)
-end
-MakeDraggable(MenuToggle) 
-MakeDraggable(MainWindow)
-
--- Eksekusi Penghancuran Skrip saat Tombol Pop-up IYA diklik
-local Children = Pop:GetChildren()
-local btnYes, btnNo
-for _, child in pairs(Children) do
-	if child:IsA("TextButton") then
-		if child.Text == "IYA" then btnYes = child elseif child.Text == "TIDAK" then btnNo = child end
-	end
-end
-
-if btnNo then btnNo.MouseButton1Click:Connect(function() Pop.Visible = false end) end
-if btnYes then
-	btnYes.MouseButton1Click:Connect(function()
-		Pop.Visible = false
-		if shared.B1 then shared.B1:Disconnect() end
-		if shared.B2 then shared.B2:Disconnect() end
-		shared.CurrentBoosterMode = 1 shared.Mode4Active = false
-		pcall(function() game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.All, true) end)
-		
-		for v, data in pairs(shared.OriginalBoosterData) do
-			pcall(function()
-				if v:IsA("BasePart") then v.Material = data.Material v.Color = data.Color v.Transparency = data.Transparency v.CastShadow = data.CastShadow
-				elseif v:IsA("Sky") then v.Parent = data.Parent
-				elseif v:IsA("Decal") or v:IsA("Texture") then v.Transparency = data.Transparency
-				else v.Enabled = data.Enabled end
-			end)
-		end
-		pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Automatic end)
-		game:GetService("Lighting").GlobalShadows = true game:GetService("Lighting").ExposureCompensation = 0
-		if ScreenGui then ScreenGui:Destroy() print("Skrip Berhasil Dihapus Sempurna!") end
-	end)
-end
-
-print("Seluruh Rangkaian Skrip Sukses Diperbaiki & Tamat Dimuat!")
+M14_CharacterHandler()  -- Character handler (jalankan paralel)
