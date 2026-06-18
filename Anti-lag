@@ -1,4 +1,3 @@
-
 --[[
 ╔══════════════════════════════════════════════════════════════════╗
 ║              SafeBooster FPS v3.0 — Clean Edition              ║
@@ -6,10 +5,6 @@
 ║  Fitur: No-Shadow | No-FX | No-Fog | Polos NPC & Player | HUD ║
 ╚══════════════════════════════════════════════════════════════════╝
 --]]
-
--- ══════════════════════════════════════════════════════════════════
---  [A] CORE ENGINE
--- ══════════════════════════════════════════════════════════════════
 
 local RunService       = game:GetService("RunService")
 local Players          = game:GetService("Players")
@@ -26,10 +21,8 @@ local function IsType(obj, t) local ok, r = pcall(function() return obj:IsA(t) e
 local function IsMobile() return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled end
 local function Log(tag, msg) print(string.format("[%s] %s", tag, msg)) end
 
--- ─── Config ──────────────────────────────────────────────────────
 local Config = {
     CameraFOV              = 70,
-
     ForceSmoothPlastic     = true,
     DisableDecals          = true,
     DisableShadows         = true,
@@ -43,56 +36,37 @@ local Config = {
     DisableFire            = true,
     DisableSparks          = true,
     KillLights             = true,
-
-    -- Kabut
     DisableFog             = true,
-
-    -- Polos NPC & Player
     PolosNPC               = true,
     PolosPlayers           = true,
-    PolosColor             = nil,      -- nil = warna asli | Color3 = seragam
-    PolosScanInterval      = 3.0,      -- detik antar re-scan NPC
-
-    -- Throttle scan
+    PolosColor             = nil,
+    PolosScanInterval      = 3.0,
     BatchSize              = 150,
     BatchDelay             = 0.03,
     WatcherQueueDelay      = 0.5,
     WatcherMaxPerTick      = 20,
 }
 
-
--- ══════════════════════════════════════════════════════════════════
---  [B] FPS BOOSTER
--- ══════════════════════════════════════════════════════════════════
-
 local FPSBooster = {}
 
--- ── Render & Lighting ────────────────────────────────────────────
 function FPSBooster.ApplyRenderAndLighting()
-    pcall(function()
-        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-    end)
+    pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
     SafeSet(Camera, "FieldOfView", Config.CameraFOV)
     SafeSet(Lighting, "GlobalShadows", false)
-
-    -- Hapus efek Lighting
     for _, fx in pairs(Lighting:GetChildren()) do
         pcall(function()
-            if Config.DisableBloom           and IsType(fx, "BloomEffect")         then fx:Destroy()
-            elseif Config.DisableBlur        and IsType(fx, "BlurEffect")          then fx:Destroy()
-            elseif Config.DisableSunRays     and IsType(fx, "SunRaysEffect")       then fx:Destroy()
+            if Config.DisableBloom and IsType(fx, "BloomEffect") then fx:Destroy()
+            elseif Config.DisableBlur and IsType(fx, "BlurEffect") then fx:Destroy()
+            elseif Config.DisableSunRays and IsType(fx, "SunRaysEffect") then fx:Destroy()
             elseif Config.DisableColorCorrection and IsType(fx, "ColorCorrectionEffect") then fx:Destroy()
             end
         end)
     end
-
-    -- Hilangkan kabut klasik
     if Config.DisableFog then
         pcall(function()
             Lighting.FogStart = 100000
             Lighting.FogEnd   = 100000
         end)
-        -- Hilangkan Atmosphere (kabut volumetrik modern)
         for _, child in pairs(Lighting:GetChildren()) do
             pcall(function()
                 if IsType(child, "Atmosphere") then
@@ -103,35 +77,25 @@ function FPSBooster.ApplyRenderAndLighting()
                 end
             end)
         end
-        Log("FPS", "🌫️ Kabut (Fog + Atmosphere) dihilangkan")
+        Log("FPS", "Kabut dihilangkan")
     end
-
-    Log("FPS", "✅ Render & Lighting applied")
+    Log("FPS", "Render & Lighting applied")
 end
 
--- ── Mobile Boost ─────────────────────────────────────────────────
 function FPSBooster.MobileBoost()
-    if not IsMobile() then
-        Log("FPS", "🖥️ Mode PC terdeteksi")
-        return
-    end
-    Log("FPS", "📱 Mode Mobile — boost ringan diterapkan")
-    pcall(function()
-        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-    end)
+    if not IsMobile() then Log("FPS", "Mode PC"); return end
+    Log("FPS", "Mode Mobile")
+    pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
 end
 
--- ── Optimasi satu object ─────────────────────────────────────────
 function FPSBooster.OptimizeObject(obj)
     pcall(function()
         if IsType(obj, "BasePart") then
-            if Config.DisableShadows    then obj.CastShadow = false end
+            if Config.DisableShadows     then obj.CastShadow = false end
             if Config.ForceSmoothPlastic then obj.Material = Enum.Material.SmoothPlastic end
             return
         end
-        if Config.DisableDecals and (IsType(obj, "Decal") or IsType(obj, "Texture")) then
-            obj.Transparency = 1; return
-        end
+        if Config.DisableDecals and (IsType(obj, "Decal") or IsType(obj, "Texture")) then obj.Transparency = 1; return end
         if Config.DisableParticles and IsType(obj, "ParticleEmitter") then obj.Enabled = false; return end
         if Config.DisableTrails    and IsType(obj, "Trail")           then obj.Enabled = false; return end
         if Config.DisableSmoke     and IsType(obj, "Smoke")           then obj.Enabled = false; return end
@@ -145,214 +109,149 @@ function FPSBooster.OptimizeObject(obj)
     end)
 end
 
--- ── Batch scan awal workspace ────────────────────────────────────
 function FPSBooster.BatchScanWorkspace()
     local all = Workspace:GetDescendants()
     local total = #all
-    Log("FPS", "🔍 Scan " .. total .. " object (batch mode, aman dari freeze)")
+    Log("FPS", "Scan "..total.." object")
     for i = 1, total, Config.BatchSize do
         local batchEnd = math.min(i + Config.BatchSize - 1, total)
-        for j = i, batchEnd do
-            FPSBooster.OptimizeObject(all[j])
-        end
+        for j = i, batchEnd do FPSBooster.OptimizeObject(all[j]) end
         task.wait(Config.BatchDelay)
     end
-    Log("FPS", "✅ Scan selesai: " .. total .. " object dioptimasi")
+    Log("FPS", "Scan selesai")
 end
 
--- ── Realtime watcher (throttled) ─────────────────────────────────
 function FPSBooster.StartThrottledWatcher()
     local watchQueue, queueSize = {}, 0
-
     Workspace.DescendantAdded:Connect(function(obj)
-        if IsType(obj, "BasePart")       or IsType(obj, "ParticleEmitter")
-        or IsType(obj, "Trail")          or IsType(obj, "Smoke")
-        or IsType(obj, "Fire")           or IsType(obj, "Sparkles")
-        or IsType(obj, "Decal")          or IsType(obj, "Texture")
-        or IsType(obj, "PointLight")     or IsType(obj, "SpotLight") then
-            queueSize += 1
-            watchQueue[queueSize] = obj
+        if IsType(obj,"BasePart") or IsType(obj,"ParticleEmitter") or IsType(obj,"Trail")
+        or IsType(obj,"Smoke") or IsType(obj,"Fire") or IsType(obj,"Sparkles")
+        or IsType(obj,"Decal") or IsType(obj,"Texture") or IsType(obj,"PointLight") or IsType(obj,"SpotLight") then
+            queueSize += 1; watchQueue[queueSize] = obj
         end
     end)
-
     task.spawn(function()
         while true do
             task.wait(Config.WatcherQueueDelay)
             local processed = 0
             while queueSize > 0 and processed < Config.WatcherMaxPerTick do
                 local obj = watchQueue[queueSize]
-                watchQueue[queueSize] = nil
-                queueSize -= 1
-                if obj and obj.Parent then
-                    FPSBooster.OptimizeObject(obj)
-                end
+                watchQueue[queueSize] = nil; queueSize -= 1
+                if obj and obj.Parent then FPSBooster.OptimizeObject(obj) end
                 processed += 1
             end
         end
     end)
-
-    Log("FPS", "✅ Throttled watcher aktif")
+    Log("FPS", "Watcher aktif")
 end
 
-
--- ══════════════════════════════════════════════════════════════════
---  [B2] POLOS SYSTEM — SmoothPlastic ke NPC & Player
--- ══════════════════════════════════════════════════════════════════
-
--- ── Daftar nama NPC / accessory yang harus di-skip total ─────────
--- Tambahkan nama NPC bermasalah di sini jika masih ada error
-local NPC_BLACKLIST = {
-    -- ["NamaModel"] = true,
+-- POLOS SYSTEM
+local BODY_PARTS = {
+    HumanoidRootPart=true, Head=true, Torso=true,
+    UpperTorso=true, LowerTorso=true,
+    ["Left Arm"]=true,  ["Right Arm"]=true,
+    ["Left Leg"]=true,  ["Right Leg"]=true,
+    ["Left Hand"]=true, ["Right Hand"]=true,
+    ["Left Foot"]=true, ["Right Foot"]=true,
+    ["Left UpperArm"]=true,  ["Right UpperArm"]=true,
+    ["Left LowerArm"]=true,  ["Right LowerArm"]=true,
+    ["Left UpperLeg"]=true,  ["Right UpperLeg"]=true,
+    ["Left LowerLeg"]=true,  ["Right LowerLeg"]=true,
 }
 
--- Cek apakah sebuah part adalah bagian dari efek (bukan body utama)
--- Efek seperti LightningRing, aura, dll biasanya berada di folder Effect/Container
--- atau memiliki nama yang mengandung kata kunci tertentu
-local EFFECT_KEYWORDS = {
-    "effect", "lightning", "aura", "ring", "container",
-    "vfx", "particle", "glow", "trail", "impact",
-}
-local function IsEffectObject(obj)
-    -- Cek nama object & semua parent-nya sampai karakter
-    local current = obj
-    for _ = 1, 6 do  -- maksimal 6 level ke atas
-        if not current then break end
-        local name = string.lower(current.Name)
-        for _, kw in ipairs(EFFECT_KEYWORDS) do
-            if string.find(name, kw) then return true end
+local function PolosPart(part)
+    pcall(function()
+        if part.Parent == nil then return end
+        SafeSet(part, "CastShadow", false)
+        local mat
+        pcall(function() mat = part.Material end)
+        if mat and mat ~= Enum.Material.ForceField and mat ~= Enum.Material.Neon then
+            SafeSet(part, "Material", Enum.Material.SmoothPlastic)
         end
-        local ok, p = pcall(function() return current.Parent end)
-        if not ok or p == nil then break end
-        current = p
-    end
-    return false
+        if Config.PolosColor then SafeSet(part, "Color", Config.PolosColor) end
+        for _, child in ipairs(part:GetChildren()) do
+            pcall(function()
+                if IsType(child, "Decal") or IsType(child, "Texture") then
+                    SafeSet(child, "Transparency", 1)
+                elseif IsType(child,"ParticleEmitter") or IsType(child,"Sparkles")
+                    or IsType(child,"Fire") or IsType(child,"Smoke") then
+                    SafeSet(child, "Enabled", false)
+                end
+            end)
+        end
+    end)
 end
 
--- Terapkan polos ke satu karakter
 local function PolosCharacter(character)
     if not character then return end
     if character == LocalPlayer.Character then return end
-
-    -- Blacklist check
-    local charName
-    pcall(function() charName = character.Name end)
-    if charName and NPC_BLACKLIST[charName] then return end
-
-    -- Pastikan karakter masih ada
     local ok, parentVal = pcall(function() return character.Parent end)
     if not ok or parentVal == nil then return end
-
-    -- Pastikan Humanoid masih ada & sehat
-    local hum = character:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-
-    -- Pastikan HumanoidRootPart ada — kalau tidak ada, skip (NPC sedang spawn/mati)
-    local hrp = character:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-
-    -- Snapshot descendants
-    local descendants
-    local snapOk = pcall(function() descendants = character:GetDescendants() end)
-    if not snapOk or not descendants then return end
-
-    for _, part in ipairs(descendants) do
+    if not character:FindFirstChildOfClass("Humanoid") then return end
+    if not character:FindFirstChild("HumanoidRootPart") then return end
+    local children
+    pcall(function() children = character:GetChildren() end)
+    if not children then return end
+    for _, child in ipairs(children) do
         pcall(function()
-            -- Guard: skip yang sudah di-destroy
-            if part.Parent == nil then return end
-
-            -- KRITIS: skip semua object yang berada di dalam folder efek/container
-            -- Ini mencegah error LightningRing dan efek serupa
-            if IsEffectObject(part) then return end
-
-            if IsType(part, "BasePart") then
-                -- Hanya sentuh shadow & material — jangan ubah ukuran/posisi/parent
-                SafeSet(part, "CastShadow", false)
-                -- Hanya terapkan SmoothPlastic pada part yang materialnya bukan Force Field
-                -- (beberapa NPC boss punya material khusus yang tidak boleh diubah)
-                local mat
-                pcall(function() mat = part.Material end)
-                if mat and mat ~= Enum.Material.ForceField and mat ~= Enum.Material.Neon then
-                    SafeSet(part, "Material", Enum.Material.SmoothPlastic)
-                end
-                if Config.PolosColor then
-                    SafeSet(part, "Color", Config.PolosColor)
-                end
-
-            elseif IsType(part, "Decal") or IsType(part, "Texture") then
-                SafeSet(part, "Transparency", 1)
-
-            elseif IsType(part, "ParticleEmitter") or IsType(part, "Trail")
-                or IsType(part, "Sparkles") or IsType(part, "Smoke") or IsType(part, "Fire") then
-                SafeSet(part, "Enabled", false)
-
-            -- DIHAPUS: SpecialMesh TextureId — ini penyebab crash LightningRing
-            -- SpecialMesh tidak disentuh sama sekali untuk menghindari konflik efek
+            if child.Parent == nil then return end
+            if IsType(child, "BasePart") and BODY_PARTS[child.Name] then
+                PolosPart(child)
+            elseif IsType(child, "Accessory") or IsType(child, "Hat") then
+                local handle = child:FindFirstChild("Handle")
+                if handle and IsType(handle, "BasePart") then PolosPart(handle) end
+            elseif IsType(child, "Shirt") then SafeSet(child, "ShirtTemplate", "")
+            elseif IsType(child, "Pants") then SafeSet(child, "PantsTemplate", "")
+            elseif IsType(child, "ShirtGraphic") then SafeSet(child, "Graphic", "")
             end
         end)
     end
 end
 
--- Polos semua NPC di Workspace
 function FPSBooster.PolosAllNPC()
     if not Config.PolosNPC then return end
-
     local playerChars = {}
     for _, p in ipairs(Players:GetPlayers()) do
         if p.Character then playerChars[p.Character] = true end
     end
-
     local all
     pcall(function() all = Workspace:GetDescendants() end)
     if not all then return end
-
     local count = 0
     for _, obj in ipairs(all) do
         pcall(function()
             if obj.Parent == nil then return end
-            if IsType(obj, "Model")
-            and obj:FindFirstChildOfClass("Humanoid")
-            and not playerChars[obj] then
-                PolosCharacter(obj)
-                count += 1
+            if IsType(obj,"Model") and obj:FindFirstChildOfClass("Humanoid") and not playerChars[obj] then
+                PolosCharacter(obj); count += 1
             end
         end)
     end
-    Log("POLOS", "🤖 NPC dipoloskan: " .. count)
+    Log("POLOS", "NPC dipoloskan: "..count)
 end
 
--- Polos semua karakter player lain
 function FPSBooster.PolosAllPlayers()
     if not Config.PolosPlayers then return end
     local count = 0
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character then
-            PolosCharacter(player.Character)
-            count += 1
+            PolosCharacter(player.Character); count += 1
         end
     end
-    Log("POLOS", "👤 Player dipoloskan: " .. count)
+    Log("POLOS", "Player dipoloskan: "..count)
 end
 
--- Watcher realtime untuk karakter baru
 function FPSBooster.StartPolosWatcher()
-    -- Hook tiap player
     local function HookPlayer(player)
         if player == LocalPlayer then return end
         if player.Character then PolosCharacter(player.Character) end
         player.CharacterAdded:Connect(function(char)
-            task.wait(1.5)  -- tunggu fully replicated
+            task.wait(1.5)
             local ok, p = pcall(function() return char.Parent end)
-            if ok and p ~= nil then
-                PolosCharacter(char)
-                Log("POLOS", "👤 Auto-polos player: " .. player.Name)
-            end
+            if ok and p ~= nil then PolosCharacter(char) end
         end)
     end
-
     for _, p in ipairs(Players:GetPlayers()) do HookPlayer(p) end
     Players.PlayerAdded:Connect(HookPlayer)
-
-    -- Re-scan NPC berkala
     if Config.PolosNPC then
         task.spawn(function()
             while true do
@@ -361,47 +260,32 @@ function FPSBooster.StartPolosWatcher()
             end
         end)
     end
-
-    -- Watcher NPC baru masuk Workspace
     Workspace.DescendantAdded:Connect(function(obj)
         pcall(function()
             if not IsType(obj, "Model") then return end
             if not obj:FindFirstChildOfClass("Humanoid") then return end
-
             local isPlayer = false
             for _, p in ipairs(Players:GetPlayers()) do
                 if p.Character == obj then isPlayer = true; break end
             end
             if isPlayer or not Config.PolosNPC then return end
-
-            task.wait(1.0)  -- tunggu NPC selesai di-replicate
+            task.wait(1.0)
             local ok, parentVal = pcall(function() return obj.Parent end)
-            if ok and parentVal ~= nil then
-                PolosCharacter(obj)
-                Log("POLOS", "🤖 Auto-polos NPC baru")
-            end
+            if ok and parentVal ~= nil then PolosCharacter(obj) end
         end)
     end)
-
-    Log("POLOS", "✅ Polos watcher aktif (NPC=" .. tostring(Config.PolosNPC)
-        .. " | Player=" .. tostring(Config.PolosPlayers) .. ")")
+    Log("POLOS", "Polos watcher aktif")
 end
 
-
--- ══════════════════════════════════════════════════════════════════
---  HUD — FPS & Ping
--- ══════════════════════════════════════════════════════════════════
-
+-- HUD
 local function CreateHUD()
     local old = PlayerGui:FindFirstChild("SafeBoosterHUD")
     if old then old:Destroy() end
-
     local ScreenGui = Instance.new("ScreenGui")
     ScreenGui.Name = "SafeBoosterHUD"
     ScreenGui.ResetOnSpawn = false
     ScreenGui.DisplayOrder = 999
     ScreenGui.Parent = PlayerGui
-
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(0, 130, 0, 56)
     frame.Position = UDim2.new(0, 8, 0, 8)
@@ -410,12 +294,6 @@ local function CreateHUD()
     frame.BorderSizePixel = 0
     Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
     frame.Parent = ScreenGui
-
-    local stroke = Instance.new("UIStroke", frame)
-    stroke.Color = Color3.fromRGB(50, 120, 220)
-    stroke.Thickness = 1
-    stroke.Transparency = 0.5
-
     local fpsLbl = Instance.new("TextLabel")
     fpsLbl.Size = UDim2.new(1, 0, 0.5, 0)
     fpsLbl.BackgroundTransparency = 1
@@ -424,7 +302,6 @@ local function CreateHUD()
     fpsLbl.Font = Enum.Font.GothamBold
     fpsLbl.TextScaled = true
     fpsLbl.Parent = frame
-
     local pingLbl = Instance.new("TextLabel")
     pingLbl.Size = UDim2.new(1, 0, 0.5, 0)
     pingLbl.Position = UDim2.new(0, 0, 0.5, 0)
@@ -434,49 +311,34 @@ local function CreateHUD()
     pingLbl.Font = Enum.Font.Gotham
     pingLbl.TextScaled = true
     pingLbl.Parent = frame
-
-    -- Update FPS
     local lastT, frames = tick(), 0
     RunService.RenderStepped:Connect(function()
         frames += 1
         local now = tick()
         if now - lastT >= 0.5 then
-            fpsLbl.Text = "FPS: " .. math.floor(frames / (now - lastT))
+            fpsLbl.Text = "FPS: "..math.floor(frames / (now - lastT))
             frames, lastT = 0, now
         end
     end)
-
-    -- Update Ping
     task.spawn(function()
         while task.wait(2) do
             pcall(function()
-                pingLbl.Text = "PING: " .. math.floor(LocalPlayer:GetNetworkPing() * 1000) .. "ms"
+                pingLbl.Text = "PING: "..math.floor(LocalPlayer:GetNetworkPing() * 1000).."ms"
             end)
         end
     end)
-
-    Log("HUD", "✅ HUD aktif")
 end
 
-
--- ══════════════════════════════════════════════════════════════════
---  MAIN EXECUTION
--- ══════════════════════════════════════════════════════════════════
-
-print("╔══════════════════════════════════╗")
-print("║  SafeBooster FPS v3.0 — Starting ║")
-print("╚══════════════════════════════════╝")
-
+-- MAIN
 FPSBooster.MobileBoost()
 FPSBooster.ApplyRenderAndLighting()
 CreateHUD()
-
 task.spawn(function()
-    task.wait(2)  -- beri waktu game load dulu
+    task.wait(2)
     FPSBooster.BatchScanWorkspace()
     FPSBooster.StartThrottledWatcher()
     FPSBooster.PolosAllNPC()
     FPSBooster.PolosAllPlayers()
     FPSBooster.StartPolosWatcher()
-    Log("SYSTEM", "✅ SafeBooster FPS v3.0 sepenuhnya aktif!")
+    Log("SYSTEM", "SafeBooster FPS v3.0 aktif!")
 end)
