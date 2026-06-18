@@ -25,7 +25,7 @@ local function SafeSet(obj, prop, val) pcall(function() obj[prop] = val end) end
 local function IsType(obj, t) local ok, r = pcall(function() return obj:IsA(t) end) return ok and r end
 local function IsMobile() return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled end
 local function Log(tag, msg) print(string.format("[%s] %s", tag, msg)) end
-)
+
 -- ─── Config ──────────────────────────────────────────────────────
 local Config = {
     CameraFOV              = 70,
@@ -199,18 +199,56 @@ end
 --  [B2] POLOS SYSTEM — SmoothPlastic ke NPC & Player
 -- ══════════════════════════════════════════════════════════════════
 
+-- ── Daftar nama NPC / accessory yang harus di-skip total ─────────
+-- Tambahkan nama NPC bermasalah di sini jika masih ada error
+local NPC_BLACKLIST = {
+    -- ["NamaModel"] = true,
+}
+
+-- Cek apakah sebuah part adalah bagian dari efek (bukan body utama)
+-- Efek seperti LightningRing, aura, dll biasanya berada di folder Effect/Container
+-- atau memiliki nama yang mengandung kata kunci tertentu
+local EFFECT_KEYWORDS = {
+    "effect", "lightning", "aura", "ring", "container",
+    "vfx", "particle", "glow", "trail", "impact",
+}
+local function IsEffectObject(obj)
+    -- Cek nama object & semua parent-nya sampai karakter
+    local current = obj
+    for _ = 1, 6 do  -- maksimal 6 level ke atas
+        if not current then break end
+        local name = string.lower(current.Name)
+        for _, kw in ipairs(EFFECT_KEYWORDS) do
+            if string.find(name, kw) then return true end
+        end
+        local ok, p = pcall(function() return current.Parent end)
+        if not ok or p == nil then break end
+        current = p
+    end
+    return false
+end
+
 -- Terapkan polos ke satu karakter
--- Guard berlapis: skip jika parent NULL / object locked / sudah di-destroy
 local function PolosCharacter(character)
     if not character then return end
     if character == LocalPlayer.Character then return end
 
-    -- Pastikan karakter masih ada di dunia
+    -- Blacklist check
+    local charName
+    pcall(function() charName = character.Name end)
+    if charName and NPC_BLACKLIST[charName] then return end
+
+    -- Pastikan karakter masih ada
     local ok, parentVal = pcall(function() return character.Parent end)
     if not ok or parentVal == nil then return end
 
-    -- Pastikan Humanoid masih ada
-    if not character:FindFirstChildOfClass("Humanoid") then return end
+    -- Pastikan Humanoid masih ada & sehat
+    local hum = character:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+
+    -- Pastikan HumanoidRootPart ada — kalau tidak ada, skip (NPC sedang spawn/mati)
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
 
     -- Snapshot descendants
     local descendants
@@ -219,21 +257,36 @@ local function PolosCharacter(character)
 
     for _, part in ipairs(descendants) do
         pcall(function()
-            if part.Parent == nil then return end  -- skip yang sudah hilang
+            -- Guard: skip yang sudah di-destroy
+            if part.Parent == nil then return end
+
+            -- KRITIS: skip semua object yang berada di dalam folder efek/container
+            -- Ini mencegah error LightningRing dan efek serupa
+            if IsEffectObject(part) then return end
 
             if IsType(part, "BasePart") then
-                SafeSet(part, "Material",    Enum.Material.SmoothPlastic)
-                SafeSet(part, "CastShadow",  false)
+                -- Hanya sentuh shadow & material — jangan ubah ukuran/posisi/parent
+                SafeSet(part, "CastShadow", false)
+                -- Hanya terapkan SmoothPlastic pada part yang materialnya bukan Force Field
+                -- (beberapa NPC boss punya material khusus yang tidak boleh diubah)
+                local mat
+                pcall(function() mat = part.Material end)
+                if mat and mat ~= Enum.Material.ForceField and mat ~= Enum.Material.Neon then
+                    SafeSet(part, "Material", Enum.Material.SmoothPlastic)
+                end
                 if Config.PolosColor then
                     SafeSet(part, "Color", Config.PolosColor)
                 end
+
             elseif IsType(part, "Decal") or IsType(part, "Texture") then
                 SafeSet(part, "Transparency", 1)
+
             elseif IsType(part, "ParticleEmitter") or IsType(part, "Trail")
                 or IsType(part, "Sparkles") or IsType(part, "Smoke") or IsType(part, "Fire") then
                 SafeSet(part, "Enabled", false)
-            elseif IsType(part, "SpecialMesh") then
-                SafeSet(part, "TextureId", "")
+
+            -- DIHAPUS: SpecialMesh TextureId — ini penyebab crash LightningRing
+            -- SpecialMesh tidak disentuh sama sekali untuk menghindari konflik efek
             end
         end)
     end
@@ -426,4 +479,4 @@ task.spawn(function()
     FPSBooster.PolosAllPlayers()
     FPSBooster.StartPolosWatcher()
     Log("SYSTEM", "✅ SafeBooster FPS v3.0 sepenuhnya aktif!")
-end
+end)
