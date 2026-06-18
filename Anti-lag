@@ -1,62 +1,125 @@
 
+-- ══════════════════════════════════════════════════════════════════
+--  [A] CORE ENGINE — Services, Config, Utilities
+-- ══════════════════════════════════════════════════════════════════
+
 local RunService        = game:GetService("RunService")
 local Players           = game:GetService("Players")
 local Lighting          = game:GetService("Lighting")
 local Workspace         = game:GetService("Workspace")
 local UserInputService  = game:GetService("UserInputService")
+local GuiService        = game:GetService("GuiService")
+local TweenService      = game:GetService("TweenService")
+local HttpService        = game:GetService("HttpService")  -- untuk JSON/encode data
 
 local LocalPlayer = Players.LocalPlayer
 local Camera      = Workspace.CurrentCamera
+local PlayerGui   = LocalPlayer.PlayerGui
 
--- ══════════════════════════════════════════════════════════════════
---                     KONFIGURASI
--- ══════════════════════════════════════════════════════════════════
-local Config = {
-    QualityLevel         = 1,
-    CameraFOV            = 70,
-
-    ForceSmoothPlastic   = true,
-    DisableDecals        = true,
-    DisableShadows       = true,
-    DisableBloom         = true,
-    DisableBlur          = true,
-    DisableSunRays       = true,
-    DisableColorCorrection = true,
-
-    DisableParticles     = true,
-    DisableTrails        = true,
-    DisableSmoke         = true,
-    DisableFire          = true,
-    DisableSparks        = true,
-    KillLights           = true,
-
-    -- THROTTLE: jeda antar batch scan (detik) — PENTING agar tidak freeze
-    BatchSize            = 150,     -- objek per batch
-    BatchDelay           = 0.03,    -- delay antar batch
-
-    -- THROTTLE: listener realtime dibatasi, bukan tiap object langsung diproses
-    WatcherQueueDelay     = 0.5,    -- proses queue setiap 0.5 detik (bukan instant)
-    WatcherMaxPerTick     = 20,     -- maksimal 20 object diproses per tick watcher
-
-    ShowFPS              = true,
-    ShowPing             = true,
-}
-
+-- ─── Utility Helpers ────────────────────────────────────────────
 local function SafeSet(obj, prop, val) pcall(function() obj[prop] = val end) end
 local function IsType(obj, t) local ok, r = pcall(function() return obj:IsA(t) end) return ok and r end
 local function IsMobile() return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled end
-local function Log(msg) print("[SafeBooster] " .. msg) end
+local function Log(tag, msg) print(string.format("[%s] %s", tag, msg)) end
+local function Timestamp() return math.floor(tick() * 1000) end -- ms
+
+-- ─── Master Config ───────────────────────────────────────────────
+local Config = {
+    -- FPS Booster
+    QualityLevel            = 1,
+    CameraFOV               = 70,
+    ForceSmoothPlastic      = true,
+    DisableDecals           = true,
+    DisableShadows          = true,
+    DisableBloom            = true,
+    DisableBlur             = true,
+    DisableSunRays          = true,
+    DisableColorCorrection  = true,
+    DisableParticles        = true,
+    DisableTrails           = true,
+    DisableSmoke            = true,
+    DisableFire             = true,
+    DisableSparks           = true,
+    KillLights              = true,
+
+    -- FITUR BARU: Polos NPC & Player
+    PolosNPC                = true,   -- SmoothPlastic ke semua NPC di Workspace
+    PolosPlayers            = true,   -- SmoothPlastic ke semua karakter player lain
+    PolosColor              = nil,     -- nil = warna asli dipertahankan | Color3 = ganti warna seragam
+    PolosScanInterval       = 1.0,    -- interval re-scan karakter baru (detik)
+
+    -- FITUR BARU: Hilangkan Kabut
+    DisableFog              = true,   -- hapus kabut (FogStart, FogEnd, FogColor)
+
+    BatchSize               = 150,
+    BatchDelay              = 0.03,
+    WatcherQueueDelay       = 0.5,
+    WatcherMaxPerTick       = 20,
+    ShowFPS                 = true,
+    ShowPing                = true,
+
+    -- Macro System
+    Macro = {
+        MaxRecordDuration   = 300,      -- maks rekaman 5 menit (detik)
+        PlaybackSpeedMult   = 1.0,      -- pengali kecepatan playback (1.0 = normal)
+        LoopCount           = 1,        -- jumlah loop eksekusi (0 = infinite)
+        DelayBetweenLoops   = 0.5,      -- jeda antar loop (detik)
+        PixelSampleRate     = 0.1,      -- interval cek pixel warna (detik)
+        MaxDataRows         = 500,      -- maks baris data CSV yang bisa dimuat
+        AutoPauseOnDetach   = true,     -- pause otomatis jika koneksi terputus
+        ConfirmMassAction   = true,     -- tampilkan konfirmasi sebelum aksi massal
+    },
+
+    -- Widget UI
+    Widget = {
+        PrimaryColor        = Color3.fromRGB(30, 144, 255),   -- DodgerBlue
+        DangerColor         = Color3.fromRGB(220, 53, 69),    -- Red
+        SuccessColor        = Color3.fromRGB(40, 167, 69),    -- Green
+        WarningColor        = Color3.fromRGB(255, 193, 7),    -- Amber
+        BgColor             = Color3.fromRGB(15, 15, 20),
+        BgTransparency      = 0.15,
+        FontTitle           = Enum.Font.GothamBold,
+        FontBody            = Enum.Font.Gotham,
+        MobilePosition      = UDim2.new(0.5, -90, 1, -200),  -- bawah tengah
+        PCPosition          = UDim2.new(0, 10, 0.3, 0),      -- kiri tengah
+    },
+}
+
 
 -- ══════════════════════════════════════════════════════════════════
---   1. RENDER & LIGHTING (ringan, sekali jalan, tidak ada loop berat)
+--  [B] FPS BOOSTER — (Arsitektur asli, dipertahankan penuh)
 -- ══════════════════════════════════════════════════════════════════
-local function ApplyRenderAndLighting()
+
+local FPSBooster = {}
+
+function FPSBooster.ApplyRenderAndLighting()
     pcall(function()
         settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
     end)
     SafeSet(Camera, "FieldOfView", Config.CameraFOV)
-
     SafeSet(Lighting, "GlobalShadows", false)
+
+    -- ── Hilangkan Kabut (Fog) ────────────────────────────────────
+    if Config.DisableFog then
+        pcall(function()
+            Lighting.FogStart  = 100000   -- dorong batas mulai kabut sangat jauh
+            Lighting.FogEnd    = 100000   -- dorong batas akhir kabut sangat jauh
+            Lighting.FogColor  = Color3.fromRGB(128, 128, 128)  -- netral (tidak mempengaruhi warna)
+        end)
+        -- Hapus juga jika ada object Atmosphere (kabut volumetrik Roblox modern)
+        for _, child in pairs(Lighting:GetChildren()) do
+            pcall(function()
+                if IsType(child, "Atmosphere") then
+                    child.Density   = 0      -- kepadatan = 0 (transparan total)
+                    child.Offset    = 0
+                    child.Haze      = 0
+                    child.Glare     = 0
+                    child.Decay     = Color3.fromRGB(255, 255, 255)
+                end
+            end)
+        end
+        Log("FPS", "🌫️ Kabut (Fog + Atmosphere) dihilangkan")
+    end
 
     for _, fx in pairs(Lighting:GetChildren()) do
         pcall(function()
@@ -67,207 +130,1514 @@ local function ApplyRenderAndLighting()
             end
         end)
     end
-    Log("✅ Render & Lighting applied")
+    Log("FPS", "✅ Render & Lighting applied")
 end
 
--- ══════════════════════════════════════════════════════════════════
---   2. OPTIMIZE SATU OBJECT (dipakai scan awal & watcher)
---      Catatan: TIDAK menyentuh apapun yang berhubungan dengan
---      RemoteEvent, ModuleScript, atau folder Combat/Loader/Modules.
---      Hanya menyentuh BasePart/FX visual murni.
--- ══════════════════════════════════════════════════════════════════
-local function OptimizeObject(obj)
-    -- Guard: jangan sentuh kalau bukan tipe visual yang relevan
-    local ok = pcall(function()
+function FPSBooster.OptimizeObject(obj)
+    pcall(function()
         if IsType(obj, "BasePart") then
             if Config.DisableShadows then obj.CastShadow = false end
-            if Config.ForceSmoothPlastic then
-                obj.Material = Enum.Material.SmoothPlastic
-            end
+            if Config.ForceSmoothPlastic then obj.Material = Enum.Material.SmoothPlastic end
             return
         end
-
         if Config.DisableDecals and (IsType(obj, "Decal") or IsType(obj, "Texture")) then
-            obj.Transparency = 1
-            return
+            obj.Transparency = 1; return
         end
-
-        if Config.DisableParticles and IsType(obj, "ParticleEmitter") then
-            obj.Enabled = false
-            return
-        end
-
-        if Config.DisableTrails and IsType(obj, "Trail") then
-            obj.Enabled = false
-            return
-        end
-
-        if Config.DisableSmoke and IsType(obj, "Smoke") then obj.Enabled = false return end
-        if Config.DisableFire and IsType(obj, "Fire") then obj.Enabled = false return end
-        if Config.DisableSparks and IsType(obj, "Sparkles") then obj.Enabled = false return end
-
+        if Config.DisableParticles and IsType(obj, "ParticleEmitter") then obj.Enabled = false; return end
+        if Config.DisableTrails and IsType(obj, "Trail") then obj.Enabled = false; return end
+        if Config.DisableSmoke and IsType(obj, "Smoke") then obj.Enabled = false; return end
+        if Config.DisableFire and IsType(obj, "Fire") then obj.Enabled = false; return end
+        if Config.DisableSparks and IsType(obj, "Sparkles") then obj.Enabled = false; return end
         if Config.KillLights then
             if IsType(obj, "PointLight") or IsType(obj, "SpotLight") or IsType(obj, "SurfaceLight") then
                 obj.Brightness = 0
             end
         end
     end)
-    -- Kalau gagal (misal property locked/protected), diamkan saja, jangan ganggu object lain
 end
 
--- ══════════════════════════════════════════════════════════════════
---   3. BATCH SCAN AWAL — dipecah kecil + delay, TIDAK freeze
--- ══════════════════════════════════════════════════════════════════
-local function BatchScanWorkspace()
+function FPSBooster.BatchScanWorkspace()
     local all = Workspace:GetDescendants()
     local total = #all
-    local processed = 0
-
-    Log("🔍 Mulai scan " .. total .. " object (dipecah per batch, aman dari freeze)")
-
+    Log("FPS", "🔍 Scan " .. total .. " object (batch mode)")
     for i = 1, total, Config.BatchSize do
         local batchEnd = math.min(i + Config.BatchSize - 1, total)
-        for j = i, batchEnd do
-            OptimizeObject(all[j])
-        end
-        processed = batchEnd
-        task.wait(Config.BatchDelay)  -- beri waktu ke engine, render frame tidak nge-drop
+        for j = i, batchEnd do FPSBooster.OptimizeObject(all[j]) end
+        task.wait(Config.BatchDelay)
     end
-
-    Log("✅ Scan selesai: " .. processed .. " object dioptimasi")
+    Log("FPS", "✅ Scan selesai: " .. total .. " object dioptimasi")
 end
 
--- ══════════════════════════════════════════════════════════════════
---   4. REALTIME WATCHER — DIBATASI (Queue + Throttle)
---      INI YANG MEMPERBAIKI MASALAH UTAMA:
---      Versi lama langsung proses tiap DescendantAdded → ratusan kali/detik.
---      Versi baru: cuma MASUKKAN ke queue, lalu diproses sedikit-sedikit
---      tiap beberapa detik. Jauh lebih ringan untuk game combat ramai.
--- ══════════════════════════════════════════════════════════════════
-local watchQueue = {}
-local queueSize = 0
-
-local function StartThrottledWatcher()
+function FPSBooster.StartThrottledWatcher()
+    local watchQueue, queueSize = {}, 0
     Workspace.DescendantAdded:Connect(function(obj)
-        -- Cuma masukkan ke queue kalau tipe-nya relevan (filter cepat)
-        if IsType(obj, "BasePart") or IsType(obj, "ParticleEmitter")
-        or IsType(obj, "Trail") or IsType(obj, "Smoke") or IsType(obj, "Fire")
-        or IsType(obj, "Sparkles") or IsType(obj, "Decal") or IsType(obj, "Texture")
-        or IsType(obj, "PointLight") or IsType(obj, "SpotLight") then
-            queueSize += 1
-            watchQueue[queueSize] = obj
+        if IsType(obj, "BasePart") or IsType(obj, "ParticleEmitter") or IsType(obj, "Trail")
+        or IsType(obj, "Smoke") or IsType(obj, "Fire") or IsType(obj, "Sparkles")
+        or IsType(obj, "Decal") or IsType(obj, "Texture") or IsType(obj, "PointLight")
+        or IsType(obj, "SpotLight") then
+            queueSize += 1; watchQueue[queueSize] = obj
         end
     end)
-
-    -- Proses queue sedikit-sedikit, tidak instant
     task.spawn(function()
         while true do
             task.wait(Config.WatcherQueueDelay)
-
-            local processedThisTick = 0
-            while queueSize > 0 and processedThisTick < Config.WatcherMaxPerTick do
+            local processed = 0
+            while queueSize > 0 and processed < Config.WatcherMaxPerTick do
                 local obj = watchQueue[queueSize]
-                watchQueue[queueSize] = nil
-                queueSize -= 1
-
-                if obj and obj.Parent then  -- pastikan object belum di-destroy
-                    OptimizeObject(obj)
-                end
-                processedThisTick += 1
+                watchQueue[queueSize] = nil; queueSize -= 1
+                if obj and obj.Parent then FPSBooster.OptimizeObject(obj) end
+                processed += 1
             end
         end
     end)
+    Log("FPS", "✅ Throttled watcher aktif")
+end
 
-    Log("✅ Throttled watcher aktif (delay " .. Config.WatcherQueueDelay .. "s, max " .. Config.WatcherMaxPerTick .. "/tick)")
+function FPSBooster.MobileBoost()
+    if not IsMobile() then Log("FPS", "🖥️ Mode PC terdeteksi"); return end
+    Log("FPS", "📱 Mode Mobile — boost ringan diterapkan")
+    pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
 end
 
 -- ══════════════════════════════════════════════════════════════════
---   5. MOBILE BOOST (ringan, tidak ada loop tambahan)
+--  [B2] POLOS CHARACTER — NPC & Player (SmoothPlastic + No Texture)
 -- ══════════════════════════════════════════════════════════════════
-local function MobileBoost()
-    if not IsMobile() then
-        Log("🖥️ Mode PC terdeteksi")
-        return
-    end
-    Log("📱 Mode Mobile terdeteksi - boost ringan diterapkan")
+--[[
+  "Polos" berarti:
+  - Material seluruh BasePart karakter → SmoothPlastic
+  - Decal / Texture di karakter → Transparency = 1 (hilang)
+  - Aksesoris (Hat, Shirt, Pants, dll) tetap ada modelnya tapi polos
+  - Warna bisa dipertahankan asli (PolosColor = nil) atau diseragamkan
+  - Khusus karakter LocalPlayer TIDAK diubah (hanya NPC & player lain)
+--]]
+
+-- Terapkan efek polos ke satu karakter (Model dengan Humanoid)
+local function PolosCharacter(character)
+    if not character then return end
+    -- Jangan ubah karakter sendiri jika tidak dikehendaki
+    if character == LocalPlayer.Character then return end
+
     pcall(function()
-        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+        for _, part in ipairs(character:GetDescendants()) do
+            pcall(function()
+                if IsType(part, "BasePart") then
+                    part.Material  = Enum.Material.SmoothPlastic
+                    part.CastShadow = false
+                    if Config.PolosColor then
+                        part.Color = Config.PolosColor
+                    end
+                elseif IsType(part, "Decal") or IsType(part, "Texture") then
+                    part.Transparency = 1
+                elseif IsType(part, "ParticleEmitter") or IsType(part, "Trail")
+                    or IsType(part, "Sparkles") or IsType(part, "Smoke") or IsType(part, "Fire") then
+                    part.Enabled = false
+                elseif IsType(part, "SpecialMesh") then
+                    -- Pertahankan bentuk mesh (kepala, badan) tapi hapus texture-nya
+                    part.TextureId = ""
+                end
+            end)
+        end
     end)
 end
 
+-- Polos semua NPC (karakter di Workspace yang bukan player)
+function FPSBooster.PolosAllNPC()
+    if not Config.PolosNPC then return end
+    local playerChars = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Character then playerChars[p.Character] = true end
+    end
+
+    local count = 0
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        pcall(function()
+            if IsType(obj, "Model") and obj:FindFirstChildOfClass("Humanoid")
+            and not playerChars[obj] then
+                PolosCharacter(obj)
+                count += 1
+            end
+        end)
+    end
+    Log("POLOS", "🤖 NPC dipoloskan: " .. count .. " karakter")
+end
+
+-- Polos semua karakter player lain (bukan LocalPlayer)
+function FPSBooster.PolosAllPlayers()
+    if not Config.PolosPlayers then return end
+    local count = 0
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            PolosCharacter(player.Character)
+            count += 1
+        end
+    end
+    Log("POLOS", "👤 Player lain dipoloskan: " .. count .. " karakter")
+end
+
+-- Watcher realtime: setiap player baru / karakter baru di-polos otomatis
+function FPSBooster.StartPolosWatcher()
+    -- Hook setiap player yang sudah ada & yang bergabung nanti
+    local function HookPlayer(player)
+        if player == LocalPlayer then return end
+        -- Karakter sudah ada sekarang
+        if player.Character then
+            PolosCharacter(player.Character)
+        end
+        -- Karakter yang respawn nanti
+        player.CharacterAdded:Connect(function(char)
+            task.wait(0.5)  -- tunggu karakter fully load
+            PolosCharacter(char)
+            Log("POLOS", "👤 Auto-polos: " .. player.Name)
+        end)
+    end
+
+    for _, p in ipairs(Players:GetPlayers()) do HookPlayer(p) end
+    Players.PlayerAdded:Connect(HookPlayer)
+
+    -- Re-scan NPC berkala (untuk NPC yang spawn terlambat)
+    if Config.PolosNPC then
+        task.spawn(function()
+            while true do
+                task.wait(Config.PolosScanInterval)
+                FPSBooster.PolosAllNPC()
+            end
+        end)
+    end
+
+    -- Watcher DescendantAdded untuk NPC baru
+    Workspace.DescendantAdded:Connect(function(obj)
+        pcall(function()
+            if IsType(obj, "Model") and obj:FindFirstChildOfClass("Humanoid") then
+                -- Cek apakah ini NPC (bukan player)
+                local isPlayer = false
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p.Character == obj then isPlayer = true; break end
+                end
+                if not isPlayer and Config.PolosNPC then
+                    task.wait(0.3)
+                    PolosCharacter(obj)
+                end
+            end
+        end)
+    end)
+
+    Log("POLOS", "✅ Polos watcher aktif (NPC=" .. tostring(Config.PolosNPC)
+        .. " | Player=" .. tostring(Config.PolosPlayers) .. ")")
+end
+
+
 -- ══════════════════════════════════════════════════════════════════
---   6. HUD SEDERHANA (FPS + Ping)
+--  [C] ACTION RECORDER — Merekam urutan aksi input pengguna
 -- ══════════════════════════════════════════════════════════════════
-local function CreateHUD()
-    local old = LocalPlayer.PlayerGui:FindFirstChild("SafeBoosterHUD")
-    if old then old:Destroy() end
+--[[
+  FORMAT AKSI YANG DIREKAM:
+  {
+    type     = "click" | "key" | "text" | "delay" | "drag" | "scroll",
+    t        = timestamp_ms,              -- waktu relatif sejak mulai rekaman
+    -- untuk click/drag:
+    x        = number,                    -- posisi X layar (pixel)
+    y        = number,                    -- posisi Y layar (pixel)
+    x2       = number,                    -- target X (drag saja)
+    y2       = number,                    -- target Y (drag saja)
+    button   = "Left"|"Right"|"Middle",
+    -- untuk key:
+    key      = Enum.KeyCode,
+    mod      = { shift=bool, ctrl=bool, alt=bool },
+    -- untuk text (keystroke batch):
+    text     = string,
+    -- untuk delay eksplisit:
+    duration = number,                    -- ms
+    -- untuk scroll:
+    delta    = number,                    -- positif = atas, negatif = bawah
+  }
+--]]
 
-    local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "SafeBoosterHUD"
-    ScreenGui.ResetOnSpawn = false
-    ScreenGui.Parent = LocalPlayer.PlayerGui
+local ActionRecorder = {}
+ActionRecorder._recording  = false
+ActionRecorder._actions    = {}
+ActionRecorder._startTime  = 0
+ActionRecorder._connections = {}
+ActionRecorder._textBuffer = ""
 
-    local Frame = Instance.new("Frame")
-    Frame.Size = UDim2.new(0, 150, 0, 70)
-    Frame.Position = UDim2.new(0, 10, 0, 10)
-    Frame.BackgroundColor3 = Color3.fromRGB(10,10,10)
-    Frame.BackgroundTransparency = 0.35
-    Frame.Parent = ScreenGui
-    Instance.new("UICorner", Frame).CornerRadius = UDim.new(0,8)
+-- Mulai merekam
+function ActionRecorder.Start()
+    if ActionRecorder._recording then
+        Log("RECORDER", "⚠️ Sedang merekam — hentikan dulu sebelum mulai baru")
+        return false
+    end
+    ActionRecorder._recording = true
+    ActionRecorder._actions   = {}
+    ActionRecorder._startTime = Timestamp()
+    ActionRecorder._textBuffer = ""
 
-    local FPSLbl = Instance.new("TextLabel")
-    FPSLbl.Size = UDim2.new(1,0,0.5,0)
-    FPSLbl.BackgroundTransparency = 1
-    FPSLbl.Text = "FPS: --"
-    FPSLbl.TextColor3 = Color3.new(1,1,1)
-    FPSLbl.TextScaled = true
-    FPSLbl.Font = Enum.Font.GothamBold
-    FPSLbl.Parent = Frame
+    local function rel() return Timestamp() - ActionRecorder._startTime end
 
-    local PingLbl = Instance.new("TextLabel")
-    PingLbl.Size = UDim2.new(1,0,0.5,0)
-    PingLbl.Position = UDim2.new(0,0,0.5,0)
-    PingLbl.BackgroundTransparency = 1
-    PingLbl.Text = "PING: --ms"
-    PingLbl.TextColor3 = Color3.fromRGB(200,200,200)
-    PingLbl.TextScaled = true
-    PingLbl.Font = Enum.Font.Gotham
-    PingLbl.Parent = Frame
+    -- ── Rekam klik mouse/touch ──────────────────────────────────
+    local connInput = UserInputService.InputBegan:Connect(function(input, gpe)
+        if not ActionRecorder._recording then return end
+        local pos = input.Position  -- Vector3: X, Y, Z=0 untuk 2D
 
-    local lastTime, frames = tick(), 0
-    RunService.RenderStepped:Connect(function()
-        frames += 1
-        local now = tick()
-        if now - lastTime >= 0.5 then
-            FPSLbl.Text = "FPS: " .. math.floor(frames/(now-lastTime))
-            frames, lastTime = 0, now
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.MouseButton2
+        or input.UserInputType == Enum.UserInputType.MouseButton3 then
+            local btnMap = {
+                [Enum.UserInputType.MouseButton1] = "Left",
+                [Enum.UserInputType.MouseButton2] = "Right",
+                [Enum.UserInputType.MouseButton3] = "Middle",
+            }
+            table.insert(ActionRecorder._actions, {
+                type   = "click",
+                t      = rel(),
+                x      = pos.X,
+                y      = pos.Y,
+                button = btnMap[input.UserInputType] or "Left",
+            })
+
+        elseif input.UserInputType == Enum.UserInputType.Touch then
+            -- Rekam tap sentuhan di mobile
+            table.insert(ActionRecorder._actions, {
+                type   = "click",
+                t      = rel(),
+                x      = pos.X,
+                y      = pos.Y,
+                button = "Touch",
+            })
+
+        elseif input.UserInputType == Enum.UserInputType.Keyboard then
+            -- Rekam keystroke individu
+            local mod = {
+                shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift),
+                ctrl  = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl),
+                alt   = UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt),
+            }
+            table.insert(ActionRecorder._actions, {
+                type = "key",
+                t    = rel(),
+                key  = input.KeyCode,
+                mod  = mod,
+            })
         end
     end)
 
+    -- ── Rekam drag (mouse moved saat button ditekan) ─────────────
+    local _dragStart = nil
+    local connDragStart = UserInputService.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            _dragStart = { x = input.Position.X, y = input.Position.Y, t = rel() }
+        end
+    end)
+    local connDragEnd = UserInputService.InputEnded:Connect(function(input)
+        if not ActionRecorder._recording then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 and _dragStart then
+            local dx = math.abs(input.Position.X - _dragStart.x)
+            local dy = math.abs(input.Position.Y - _dragStart.y)
+            if dx > 5 or dy > 5 then  -- threshold: hanya rekam kalau benar-benar drag
+                table.insert(ActionRecorder._actions, {
+                    type = "drag",
+                    t    = _dragStart.t,
+                    x    = _dragStart.x,
+                    y    = _dragStart.y,
+                    x2   = input.Position.X,
+                    y2   = input.Position.Y,
+                })
+            end
+            _dragStart = nil
+        end
+    end)
+
+    -- ── Rekam scroll ─────────────────────────────────────────────
+    local connScroll = UserInputService.InputChanged:Connect(function(input)
+        if not ActionRecorder._recording then return end
+        if input.UserInputType == Enum.UserInputType.MouseWheel then
+            table.insert(ActionRecorder._actions, {
+                type  = "scroll",
+                t     = rel(),
+                x     = input.Position.X,
+                y     = input.Position.Y,
+                delta = input.Position.Z,  -- Z = scroll delta
+            })
+        end
+    end)
+
+    -- Simpan semua koneksi agar bisa diputus saat stop
+    ActionRecorder._connections = { connInput, connDragStart, connDragEnd, connScroll }
+
+    -- Safety: auto-stop setelah MaxRecordDuration
+    task.spawn(function()
+        task.wait(Config.Macro.MaxRecordDuration)
+        if ActionRecorder._recording then
+            Log("RECORDER", "⏱️ Auto-stop: durasi maksimum tercapai")
+            ActionRecorder.Stop()
+        end
+    end)
+
+    Log("RECORDER", "🔴 Rekaman dimulai...")
+    return true
+end
+
+-- Hentikan rekaman, kembalikan tabel aksi
+function ActionRecorder.Stop()
+    if not ActionRecorder._recording then return ActionRecorder._actions end
+    ActionRecorder._recording = false
+
+    for _, conn in ipairs(ActionRecorder._connections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    ActionRecorder._connections = {}
+
+    -- Hitung delay antar aksi (gap waktu) sebagai aksi "delay" eksplisit
+    local enriched = {}
+    local lastT = 0
+    for _, action in ipairs(ActionRecorder._actions) do
+        local gap = action.t - lastT
+        if gap > 50 then  -- delay lebih dari 50ms dianggap signifikan
+            table.insert(enriched, { type = "delay", t = lastT, duration = gap })
+        end
+        table.insert(enriched, action)
+        lastT = action.t
+    end
+    ActionRecorder._actions = enriched
+
+    Log("RECORDER", "⏹️ Rekaman selesai — " .. #enriched .. " aksi direkam")
+    return enriched
+end
+
+function ActionRecorder.IsRecording() return ActionRecorder._recording end
+function ActionRecorder.GetActions() return ActionRecorder._actions end
+function ActionRecorder.Clear() ActionRecorder._actions = {} end
+
+
+-- ══════════════════════════════════════════════════════════════════
+--  [D] CONDITIONAL ENGINE — Logika IF/THEN & Pemicu Pintar
+-- ══════════════════════════════════════════════════════════════════
+--[[
+  FORMAT KONDISI:
+  {
+    type  = "pixel" | "ui_element" | "network" | "time" | "player_state",
+    -- pixel: cek warna pixel di koordinat layar tertentu
+    x, y      = number,
+    color     = Color3,
+    tolerance = number (0–1),
+    -- ui_element: cek apakah GuiObject ada dan visible
+    guiPath   = string (path relatif dari PlayerGui),
+    -- network: cek ping threshold
+    pingAbove = number (ms),
+    -- time: cek waktu game (detik) atau real detik
+    gameTimeAbove = number,
+    -- player_state: cek health, dll.
+    property  = string,
+    value     = any,
+  }
+--]]
+
+local ConditionalEngine = {}
+ConditionalEngine._triggers   = {}   -- daftar trigger aktif
+ConditionalEngine._monitors   = {}   -- koneksi monitor
+
+-- Ambil warna pixel di posisi layar (menggunakan ImageLabel trick)
+-- Catatan: Roblox tidak menyediakan direct pixel read di LocalScript.
+-- Pendekatan: buat ViewportFrame / ScreenGui transparan + RaycastResult warna material,
+-- atau gunakan pendekatan "warna dominan UI element" via referensi GuiObject.
+-- Implementasi di bawah menggunakan pendekatan UI color matching yang aman.
+local function SampleUIColor(x, y)
+    -- Iterasi semua GuiObject di PlayerGui dan cek apakah ada yang menempati koordinat (x,y)
+    local screenPos = Vector2.new(x, y)
+    for _, gui in ipairs(PlayerGui:GetDescendants()) do
+        if gui:IsA("GuiObject") and gui.Visible then
+            local abs = gui.AbsolutePosition
+            local sz  = gui.AbsoluteSize
+            if screenPos.X >= abs.X and screenPos.X <= abs.X + sz.X
+            and screenPos.Y >= abs.Y and screenPos.Y <= abs.Y + sz.Y then
+                if gui:IsA("Frame") or gui:IsA("TextLabel") or gui:IsA("ImageLabel") then
+                    return gui.BackgroundColor3
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- Hitung jarak warna (0 = identik, 1 = berlawanan)
+local function ColorDistance(a, b)
+    if not a or not b then return 1 end
+    local dr = (a.R - b.R)^2
+    local dg = (a.G - b.G)^2
+    local db = (a.B - b.B)^2
+    return math.sqrt(dr + dg + db) / math.sqrt(3)
+end
+
+-- Daftarkan sebuah trigger kondisional
+-- condition: tabel kondisi (format di atas)
+-- callback: function() dipanggil jika kondisi terpenuhi
+-- oneShot: true = hapus trigger setelah terpicu sekali
+function ConditionalEngine.AddTrigger(id, condition, callback, oneShot)
+    ConditionalEngine._triggers[id] = {
+        condition = condition,
+        callback  = callback,
+        oneShot   = oneShot or false,
+        fired     = false,
+    }
+    Log("COND", "➕ Trigger '" .. id .. "' didaftarkan")
+end
+
+function ConditionalEngine.RemoveTrigger(id)
+    ConditionalEngine._triggers[id] = nil
+    Log("COND", "➖ Trigger '" .. id .. "' dihapus")
+end
+
+-- Evaluasi satu kondisi — kembalikan true/false
+local function EvalCondition(cond)
+    local t = cond.type
+
+    if t == "pixel" then
+        local sampled = SampleUIColor(cond.x, cond.y)
+        local dist = ColorDistance(sampled, cond.color)
+        return dist <= (cond.tolerance or 0.1)
+
+    elseif t == "ui_element" then
+        -- Cek apakah element ada di path & visible
+        local ok, el = pcall(function()
+            local parts = string.split(cond.guiPath, ".")
+            local current = PlayerGui
+            for _, part in ipairs(parts) do
+                current = current:FindFirstChild(part)
+                if not current then return nil end
+            end
+            return current
+        end)
+        return ok and el and el.Visible
+
+    elseif t == "network" then
+        local ok, ping = pcall(function()
+            return LocalPlayer:GetNetworkPing() * 1000
+        end)
+        return ok and ping > (cond.pingAbove or 200)
+
+    elseif t == "player_state" then
+        local ok, val = pcall(function()
+            local char = LocalPlayer.Character
+            if not char then return nil end
+            local humanoid = char:FindFirstChildOfClass("Humanoid")
+            if not humanoid then return nil end
+            return humanoid[cond.property]
+        end)
+        return ok and val == cond.value
+
+    elseif t == "time" then
+        return tick() >= (cond.gameTimeAbove or 0)
+    end
+
+    return false
+end
+
+-- Loop utama evaluasi trigger
+function ConditionalEngine.StartMonitor()
+    if ConditionalEngine._monitorActive then return end
+    ConditionalEngine._monitorActive = true
+
+    task.spawn(function()
+        while ConditionalEngine._monitorActive do
+            task.wait(Config.Macro.PixelSampleRate)
+            for id, entry in pairs(ConditionalEngine._triggers) do
+                if not entry.fired or not entry.oneShot then
+                    local ok, result = pcall(EvalCondition, entry.condition)
+                    if ok and result then
+                        entry.fired = true
+                        Log("COND", "✅ Trigger '" .. id .. "' terpicu!")
+                        pcall(entry.callback)
+                        if entry.oneShot then
+                            ConditionalEngine._triggers[id] = nil
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    Log("COND", "▶️ Monitor kondisional aktif")
+end
+
+function ConditionalEngine.StopMonitor()
+    ConditionalEngine._monitorActive = false
+    Log("COND", "⏹️ Monitor kondisional dihentikan")
+end
+
+-- Shortcut: buat trigger IF kondisi THEN jalankan callback (inline)
+function ConditionalEngine.IfThen(id, condition, thenCallback, elseCallback)
+    ConditionalEngine.AddTrigger(id, condition, function()
+        pcall(thenCallback)
+    end, true)
+    -- elseCallback bisa dijadikan trigger tersendiri dengan kondisi negasi
+    -- (implementasi lanjutan sesuai kebutuhan)
+end
+
+
+-- ══════════════════════════════════════════════════════════════════
+--  [E] DATA HANDLER — Baca CSV / tabel data, input data massal
+-- ══════════════════════════════════════════════════════════════════
+--[[
+  CATATAN:
+  Roblox LocalScript tidak bisa membaca file langsung dari disk OS.
+  DataHandler menyediakan dua mekanisme:
+  1. LoadFromString(csvText): terima string CSV dari clipboard / TextBox UI input
+  2. LoadFromRemote(url):    fetch dari URL publik via HttpService (jika diaktifkan server)
+  3. GUI Input Panel:        pengguna paste data CSV langsung ke dalam widget
+
+  Format CSV yang didukung:
+    header_kolom1,header_kolom2,...
+    nilai1a,nilai1b,...
+    nilai2a,nilai2b,...
+
+  Data yang sudah dimuat disimpan di DataHandler._rows sebagai array of dict.
+--]]
+
+local DataHandler = {}
+DataHandler._rows      = {}   -- { {col1=val, col2=val, ...}, ... }
+DataHandler._headers   = {}
+DataHandler._cursor    = 0    -- index baris saat ini untuk iterasi
+DataHandler._loaded    = false
+
+-- Parse string CSV sederhana (comma-delimited, newline row)
+local function ParseCSV(csvText)
+    local rows = {}
+    local headers = nil
+    local lineNum = 0
+
+    for line in string.gmatch(csvText .. "\n", "([^\n]*)\n") do
+        line = string.match(line, "^%s*(.-)%s*$")  -- trim whitespace
+        if #line > 0 then
+            lineNum += 1
+            local cells = {}
+            -- Split by comma, handle quoted fields sederhana
+            for cell in string.gmatch(line .. ",", '([^,]*),') do
+                cell = string.match(cell, '^"?(.-)"?$')  -- strip quotes
+                table.insert(cells, cell)
+            end
+
+            if lineNum == 1 then
+                headers = cells
+            else
+                if #cells > 0 then
+                    local row = {}
+                    for i, h in ipairs(headers) do
+                        row[h] = cells[i] or ""
+                    end
+                    table.insert(rows, row)
+                end
+            end
+        end
+    end
+    return headers, rows
+end
+
+-- Muat data dari string CSV
+function DataHandler.LoadFromString(csvText)
+    if not csvText or #csvText == 0 then
+        Log("DATA", "⚠️ CSV kosong"); return false
+    end
+    local headers, rows = ParseCSV(csvText)
+    if not headers or #rows == 0 then
+        Log("DATA", "⚠️ Gagal parse CSV — periksa format"); return false
+    end
+    if #rows > Config.Macro.MaxDataRows then
+        Log("DATA", "⚠️ Data terlalu besar, dipotong ke " .. Config.Macro.MaxDataRows .. " baris")
+        local trimmed = {}
+        for i = 1, Config.Macro.MaxDataRows do trimmed[i] = rows[i] end
+        rows = trimmed
+    end
+    DataHandler._headers = headers
+    DataHandler._rows    = rows
+    DataHandler._cursor  = 0
+    DataHandler._loaded  = true
+    Log("DATA", "✅ " .. #rows .. " baris dimuat | Kolom: " .. table.concat(headers, ", "))
+    return true
+end
+
+-- Ambil baris berikutnya (iterasi satu per satu)
+function DataHandler.NextRow()
+    if not DataHandler._loaded or #DataHandler._rows == 0 then return nil end
+    DataHandler._cursor += 1
+    if DataHandler._cursor > #DataHandler._rows then
+        DataHandler._cursor = #DataHandler._rows
+        Log("DATA", "⚠️ Sudah di baris terakhir")
+        return nil
+    end
+    return DataHandler._rows[DataHandler._cursor]
+end
+
+-- Reset cursor ke awal
+function DataHandler.Reset()
+    DataHandler._cursor = 0
+    Log("DATA", "🔄 Cursor direset ke awal")
+end
+
+-- Ambil nilai kolom spesifik dari baris saat ini
+function DataHandler.GetField(column)
+    local row = DataHandler._rows[DataHandler._cursor]
+    if not row then return nil end
+    return row[column]
+end
+
+-- Cek apakah masih ada baris
+function DataHandler.HasMore()
+    return DataHandler._loaded and DataHandler._cursor < #DataHandler._rows
+end
+
+-- Info ringkas
+function DataHandler.Info()
+    return {
+        loaded   = DataHandler._loaded,
+        total    = #DataHandler._rows,
+        cursor   = DataHandler._cursor,
+        headers  = DataHandler._headers,
+    }
+end
+
+
+-- ══════════════════════════════════════════════════════════════════
+--  [F] MACRO EXECUTOR — Jalankan skrip makro hasil rekaman
+-- ══════════════════════════════════════════════════════════════════
+--[[
+  MacroExecutor mengeksekusi urutan aksi yang direkam oleh ActionRecorder.
+  Eksekusi berjalan di goroutine terpisah, mendukung:
+    - Play / Pause / Stop
+    - Loop (N kali atau infinite)
+    - Playback speed multiplier
+    - Integrasi data CSV (substitusi field dari DataHandler per loop)
+    - Conditional hooks sebelum/sesudah setiap aksi
+--]]
+
+local MacroExecutor = {}
+MacroExecutor._state       = "idle"    -- idle | playing | paused | stopping
+MacroExecutor._actions     = {}
+MacroExecutor._loopsDone   = 0
+MacroExecutor._thread      = nil
+MacroExecutor._onComplete  = nil       -- callback opsional setelah selesai
+MacroExecutor._onProgress  = nil       -- callback(current, total, action)
+
+-- Simulasi klik pada GuiObject di posisi layar
+-- (Roblox tidak punya mouse.Click di LocalScript; menggunakan FireClickDetector/
+--  tapi untuk GUI: kita cari GuiObject di titik tersebut & fire MouseButton1Click)
+local function SimulateClick(x, y)
+    local screenPos = Vector2.new(x, y)
+    -- Temukan semua GuiButton di posisi tersebut
+    for _, gui in ipairs(PlayerGui:GetDescendants()) do
+        if (gui:IsA("TextButton") or gui:IsA("ImageButton")) and gui.Visible then
+            local abs = gui.AbsolutePosition
+            local sz  = gui.AbsoluteSize
+            if screenPos.X >= abs.X and screenPos.X <= abs.X + sz.X
+            and screenPos.Y >= abs.Y and screenPos.Y <= abs.Y + sz.Y then
+                -- Trigger event secara programatik
+                pcall(function() gui.MouseButton1Click:Fire() end)
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- Simulasi ketikan teks ke TextBox aktif
+local function SimulateText(text)
+    -- Temukan TextBox yang sedang fokus
+    for _, gui in ipairs(PlayerGui:GetDescendants()) do
+        if gui:IsA("TextBox") and gui:IsFocused() then
+            gui.Text = gui.Text .. text
+            return true
+        end
+    end
+    -- Fallback: cari TextBox pertama yang visible
+    for _, gui in ipairs(PlayerGui:GetDescendants()) do
+        if gui:IsA("TextBox") and gui.Visible then
+            gui:CaptureFocus()
+            gui.Text = gui.Text .. text
+            return true
+        end
+    end
+    return false
+end
+
+-- Isi TextBox dengan data dari DataHandler (substitusi {FIELD_NAME})
+local function SubstituteDataFields(text)
+    if not text then return text end
+    local result = text
+    for col, val in pairs(DataHandler._rows[DataHandler._cursor] or {}) do
+        result = string.gsub(result, "{" .. col .. "}", tostring(val))
+    end
+    return result
+end
+
+-- Eksekusi satu aksi
+local function ExecuteAction(action)
+    local t = action.type
+
+    if t == "delay" then
+        local dur = (action.duration or 0) / 1000  -- konversi ms → detik
+        local adjusted = dur / Config.Macro.PlaybackSpeedMult
+        task.wait(math.max(0, adjusted))
+
+    elseif t == "click" then
+        SimulateClick(action.x, action.y)
+        task.wait(0.05)  -- jeda singkat pasca klik
+
+    elseif t == "key" then
+        -- Roblox LocalScript tidak bisa inject KeyCode ke OS secara langsung
+        -- Tapi bisa fire event ke binding game internal atau custom handler
+        Log("MACRO", string.format("🔑 Key: %s (shift=%s ctrl=%s)",
+            tostring(action.key), tostring(action.mod and action.mod.shift),
+            tostring(action.mod and action.mod.ctrl)))
+        task.wait(0.02)
+
+    elseif t == "text" then
+        local textToType = SubstituteDataFields(action.text)
+        SimulateText(textToType)
+        task.wait(0.05)
+
+    elseif t == "drag" then
+        -- Simulasi drag: emulasi klik di awal, gerak, klik di akhir
+        SimulateClick(action.x, action.y)
+        task.wait(0.1)
+        SimulateClick(action.x2, action.y2)
+        task.wait(0.1)
+
+    elseif t == "scroll" then
+        Log("MACRO", string.format("🖱️ Scroll di (%.0f,%.0f) delta=%.1f", action.x, action.y, action.delta or 0))
+        task.wait(0.03)
+    end
+end
+
+-- Jalankan makro
+function MacroExecutor.Play(actions, options)
+    if MacroExecutor._state == "playing" then
+        Log("MACRO", "⚠️ Makro sudah berjalan"); return false
+    end
+    options = options or {}
+    MacroExecutor._actions    = actions or ActionRecorder.GetActions()
+    MacroExecutor._loopsDone  = 0
+    MacroExecutor._onComplete = options.onComplete
+    MacroExecutor._onProgress = options.onProgress
+
+    local loopTarget  = options.loopCount or Config.Macro.LoopCount
+    local loopDelay   = options.loopDelay or Config.Macro.DelayBetweenLoops
+    local useData     = options.useData or false     -- integrasi CSV
+    local infinite    = loopTarget == 0
+
+    if Config.Macro.ConfirmMassAction and (infinite or loopTarget > 5) then
+        Log("MACRO", "⚠️ Eksekusi massal: " .. (infinite and "∞" or loopTarget) .. " loop — pastikan sudah dikonfirmasi")
+    end
+
+    MacroExecutor._state = "playing"
+    Log("MACRO", "▶️ Makro dimulai — " .. #MacroExecutor._actions .. " aksi, loop=" .. (infinite and "∞" or loopTarget))
+
+    MacroExecutor._thread = task.spawn(function()
+        while MacroExecutor._state ~= "stopping" do
+            -- Reset data cursor di awal tiap loop
+            if useData and DataHandler._loaded then
+                DataHandler.Reset()
+                if not DataHandler.HasMore() then
+                    Log("MACRO", "⚠️ Tidak ada data tersisa di DataHandler"); break
+                end
+                DataHandler.NextRow()  -- pindah ke baris pertama
+            end
+
+            -- Jalankan semua aksi
+            for idx, action in ipairs(MacroExecutor._actions) do
+                -- Cek pause
+                while MacroExecutor._state == "paused" do
+                    task.wait(0.1)
+                end
+                if MacroExecutor._state == "stopping" then break end
+
+                -- Progress callback
+                if MacroExecutor._onProgress then
+                    pcall(MacroExecutor._onProgress, idx, #MacroExecutor._actions, action)
+                end
+
+                ExecuteAction(action)
+            end
+
+            -- Increment loop
+            MacroExecutor._loopsDone += 1
+
+            -- Cek apakah loop selesai
+            if not infinite and MacroExecutor._loopsDone >= loopTarget then
+                Log("MACRO", "✅ Semua " .. loopTarget .. " loop selesai")
+                break
+            end
+
+            -- Jeda antar loop
+            if MacroExecutor._state ~= "stopping" then
+                Log("MACRO", "🔄 Loop " .. MacroExecutor._loopsDone .. " selesai — jeda " .. loopDelay .. "s")
+                task.wait(loopDelay)
+            end
+        end
+
+        MacroExecutor._state = "idle"
+        Log("MACRO", "⏹️ Eksekusi selesai")
+        if MacroExecutor._onComplete then pcall(MacroExecutor._onComplete) end
+    end)
+
+    return true
+end
+
+function MacroExecutor.Pause()
+    if MacroExecutor._state == "playing" then
+        MacroExecutor._state = "paused"
+        Log("MACRO", "⏸️ Makro dijeda")
+        return true
+    end
+    return false
+end
+
+function MacroExecutor.Resume()
+    if MacroExecutor._state == "paused" then
+        MacroExecutor._state = "playing"
+        Log("MACRO", "▶️ Makro dilanjutkan")
+        return true
+    end
+    return false
+end
+
+function MacroExecutor.Stop()
+    MacroExecutor._state = "stopping"
+    Log("MACRO", "⏹️ Menghentikan makro...")
+    return true
+end
+
+function MacroExecutor.GetState() return MacroExecutor._state end
+function MacroExecutor.GetProgress()
+    return {
+        state    = MacroExecutor._state,
+        loops    = MacroExecutor._loopsDone,
+        actions  = #MacroExecutor._actions,
+    }
+end
+
+
+-- ══════════════════════════════════════════════════════════════════
+--  [G] FLOATING OVERLAY WIDGET — Panel kontrol (Mobile & PC)
+-- ══════════════════════════════════════════════════════════════════
+--[[
+  Widget terdiri dari:
+  ├── Panel utama (draggable, minimizable)
+  │   ├── Tab: Makro      — Play/Pause/Stop + status
+  │   ├── Tab: Rekaman    — Start/Stop rekaman
+  │   ├── Tab: Data       — Paste CSV, info baris
+  │   └── Tab: Kondisi    — Daftar trigger aktif
+  └── FPS / Ping HUD (kiri atas, selalu tampil)
+--]]
+
+local FloatingWidget = {}
+FloatingWidget._gui        = nil
+FloatingWidget._minimized  = false
+FloatingWidget._activeTab  = "macro"
+FloatingWidget._csvBuffer  = ""
+
+local W = Config.Widget  -- alias
+
+-- Buat TextLabel helper
+local function MkLabel(parent, text, size, pos, color, font, align)
+    local l = Instance.new("TextLabel")
+    l.Size = size or UDim2.new(1, 0, 0, 24)
+    l.Position = pos or UDim2.new(0, 0, 0, 0)
+    l.BackgroundTransparency = 1
+    l.Text = text
+    l.TextColor3 = color or Color3.new(1, 1, 1)
+    l.Font = font or W.FontBody
+    l.TextScaled = true
+    l.TextXAlignment = align or Enum.TextXAlignment.Center
+    l.Parent = parent
+    return l
+end
+
+-- Buat TextButton helper
+local function MkButton(parent, text, size, pos, bgColor, callback)
+    local btn = Instance.new("TextButton")
+    btn.Size = size or UDim2.new(0.3, -4, 0, 32)
+    btn.Position = pos or UDim2.new(0, 0, 0, 0)
+    btn.BackgroundColor3 = bgColor or W.PrimaryColor
+    btn.Text = text
+    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.Font = W.FontTitle
+    btn.TextScaled = true
+    btn.BorderSizePixel = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    if callback then btn.MouseButton1Click:Connect(callback) end
+    btn.Parent = parent
+    return btn
+end
+
+-- Buat tab button
+local function MkTab(parent, text, pos, callback)
+    local tab = Instance.new("TextButton")
+    tab.Size = UDim2.new(0.25, -2, 1, 0)
+    tab.Position = pos
+    tab.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    tab.Text = text
+    tab.TextColor3 = Color3.fromRGB(180, 180, 200)
+    tab.Font = W.FontBody
+    tab.TextScaled = true
+    tab.BorderSizePixel = 0
+    Instance.new("UICorner", tab).CornerRadius = UDim.new(0, 4)
+    if callback then tab.MouseButton1Click:Connect(callback) end
+    tab.Parent = parent
+    return tab
+end
+
+-- Buat seluruh widget
+function FloatingWidget.Build()
+    -- Hapus widget lama
+    local old = PlayerGui:FindFirstChild("MacroOverlayWidget")
+    if old then old:Destroy() end
+
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "MacroOverlayWidget"
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.DisplayOrder = 999
+    ScreenGui.IgnoreGuiInset = true
+    ScreenGui.Parent = PlayerGui
+
+    -- ── Panel utama ───────────────────────────────────────────────
+    local isMobile = IsMobile()
+    local panelW, panelH = 280, 430
+    local panel = Instance.new("Frame")
+    panel.Name = "MainPanel"
+    panel.Size = UDim2.new(0, panelW, 0, panelH)
+    panel.Position = isMobile and W.MobilePosition or W.PCPosition
+    panel.BackgroundColor3 = W.BgColor
+    panel.BackgroundTransparency = W.BgTransparency
+    panel.BorderSizePixel = 0
+    panel.Active = true
+    panel.Draggable = true   -- pengguna bisa drag panel ke mana saja
+    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
+    panel.Parent = ScreenGui
+
+    -- Stroke tipis
+    local stroke = Instance.new("UIStroke", panel)
+    stroke.Color = Color3.fromRGB(60, 100, 180)
+    stroke.Thickness = 1.5
+    stroke.Transparency = 0.4
+
+    -- ── Header / Titlebar ─────────────────────────────────────────
+    local header = Instance.new("Frame")
+    header.Size = UDim2.new(1, 0, 0, 36)
+    header.BackgroundColor3 = W.PrimaryColor
+    header.BorderSizePixel = 0
+    header.Parent = panel
+    Instance.new("UICorner", header).CornerRadius = UDim.new(0, 10)
+
+    MkLabel(header, "⚙ Macro System", UDim2.new(0.75, 0, 1, 0), UDim2.new(0.02, 0, 0, 0),
+        Color3.new(1,1,1), W.FontTitle)
+
+    -- Tombol minimize
+    local minBtn = Instance.new("TextButton")
+    minBtn.Size = UDim2.new(0, 28, 0, 28)
+    minBtn.Position = UDim2.new(1, -32, 0, 4)
+    minBtn.BackgroundColor3 = Color3.fromRGB(255, 200, 0)
+    minBtn.Text = "─"
+    minBtn.TextColor3 = Color3.fromRGB(30, 30, 30)
+    minBtn.Font = W.FontTitle
+    minBtn.TextScaled = true
+    minBtn.BorderSizePixel = 0
+    Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0, 6)
+    minBtn.Parent = header
+
+    -- ── Body ─────────────────────────────────────────────────────
+    local body = Instance.new("Frame")
+    body.Name = "Body"
+    body.Size = UDim2.new(1, 0, 1, -36)
+    body.Position = UDim2.new(0, 0, 0, 36)
+    body.BackgroundTransparency = 1
+    body.Parent = panel
+
+    -- ── Tab Bar ──────────────────────────────────────────────────
+    local tabBar = Instance.new("Frame")
+    tabBar.Size = UDim2.new(1, -10, 0, 28)
+    tabBar.Position = UDim2.new(0, 5, 0, 4)
+    tabBar.BackgroundTransparency = 1
+    tabBar.Parent = body
+
+    -- ── Content Area ─────────────────────────────────────────────
+    local content = Instance.new("Frame")
+    content.Name = "Content"
+    content.Size = UDim2.new(1, -10, 1, -40)
+    content.Position = UDim2.new(0, 5, 0, 36)
+    content.BackgroundTransparency = 1
+    content.Parent = body
+
+    -- ── Halaman Tab: MACRO ────────────────────────────────────────
+    local macroPage = Instance.new("Frame")
+    macroPage.Name = "MacroPage"
+    macroPage.Size = UDim2.new(1, 0, 1, 0)
+    macroPage.BackgroundTransparency = 1
+    macroPage.Parent = content
+
+    -- Status label
+    local statusLbl = MkLabel(macroPage, "Status: ⬜ Idle",
+        UDim2.new(1, 0, 0, 28), UDim2.new(0, 0, 0, 0),
+        Color3.fromRGB(180, 220, 255), W.FontTitle)
+
+    -- Loop count label
+    local loopLbl = MkLabel(macroPage, "Loop: 0 / 1",
+        UDim2.new(1, 0, 0, 22), UDim2.new(0, 0, 0, 28),
+        Color3.fromRGB(160, 160, 180))
+
+    -- Progres bar
+    local pbBg = Instance.new("Frame")
+    pbBg.Size = UDim2.new(1, 0, 0, 10)
+    pbBg.Position = UDim2.new(0, 0, 0, 54)
+    pbBg.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+    pbBg.BorderSizePixel = 0
+    Instance.new("UICorner", pbBg).CornerRadius = UDim.new(0, 5)
+    pbBg.Parent = macroPage
+
+    local pbFill = Instance.new("Frame")
+    pbFill.Size = UDim2.new(0, 0, 1, 0)
+    pbFill.BackgroundColor3 = W.SuccessColor
+    pbFill.BorderSizePixel = 0
+    Instance.new("UICorner", pbFill).CornerRadius = UDim.new(0, 5)
+    pbFill.Parent = pbBg
+
+    -- Tombol Play / Pause / Stop
+    local btnRow = Instance.new("Frame")
+    btnRow.Size = UDim2.new(1, 0, 0, 38)
+    btnRow.Position = UDim2.new(0, 0, 0, 70)
+    btnRow.BackgroundTransparency = 1
+    btnRow.Parent = macroPage
+
+    local playBtn = MkButton(btnRow, "▶ Play",
+        UDim2.new(0.32, -2, 1, 0), UDim2.new(0, 0, 0, 0),
+        W.SuccessColor, function()
+            if MacroExecutor.GetState() == "idle" then
+                MacroExecutor.Play(ActionRecorder.GetActions(), {
+                    onProgress = function(cur, total, _)
+                        pbFill.Size = UDim2.new(cur / total, 0, 1, 0)
+                    end,
+                    onComplete = function()
+                        statusLbl.Text = "Status: ✅ Selesai"
+                        pbFill.Size = UDim2.new(0, 0, 1, 0)
+                    end
+                })
+                statusLbl.Text = "Status: ▶ Berjalan"
+            elseif MacroExecutor.GetState() == "paused" then
+                MacroExecutor.Resume()
+                statusLbl.Text = "Status: ▶ Berjalan"
+            end
+        end)
+
+    local pauseBtn = MkButton(btnRow, "⏸ Jeda",
+        UDim2.new(0.32, -2, 1, 0), UDim2.new(0.34, 2, 0, 0),
+        W.WarningColor, function()
+            if MacroExecutor.GetState() == "playing" then
+                MacroExecutor.Pause()
+                statusLbl.Text = "Status: ⏸ Dijeda"
+            end
+        end)
+
+    local stopBtn = MkButton(btnRow, "⏹ Stop",
+        UDim2.new(0.32, -2, 1, 0), UDim2.new(0.68, 4, 0, 0),
+        W.DangerColor, function()
+            MacroExecutor.Stop()
+            statusLbl.Text = "Status: ⬜ Idle"
+            pbFill.Size = UDim2.new(0, 0, 1, 0)
+        end)
+
+    -- Loop & speed controls
+    local loopInput = Instance.new("TextBox")
+    loopInput.Size = UDim2.new(0.48, -4, 0, 28)
+    loopInput.Position = UDim2.new(0, 0, 0, 116)
+    loopInput.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    loopInput.TextColor3 = Color3.new(1, 1, 1)
+    loopInput.PlaceholderText = "Loop (0=∞)"
+    loopInput.Text = "1"
+    loopInput.Font = W.FontBody
+    loopInput.TextScaled = true
+    loopInput.BorderSizePixel = 0
+    Instance.new("UICorner", loopInput).CornerRadius = UDim.new(0, 6)
+    loopInput.Parent = macroPage
+    loopInput.FocusLost:Connect(function()
+        Config.Macro.LoopCount = tonumber(loopInput.Text) or 1
+    end)
+
+    local speedInput = Instance.new("TextBox")
+    speedInput.Size = UDim2.new(0.48, -4, 0, 28)
+    speedInput.Position = UDim2.new(0.52, 4, 0, 116)
+    speedInput.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    speedInput.TextColor3 = Color3.new(1, 1, 1)
+    speedInput.PlaceholderText = "Speed (1.0)"
+    speedInput.Text = "1.0"
+    speedInput.Font = W.FontBody
+    speedInput.TextScaled = true
+    speedInput.BorderSizePixel = 0
+    Instance.new("UICorner", speedInput).CornerRadius = UDim.new(0, 6)
+    speedInput.Parent = macroPage
+    speedInput.FocusLost:Connect(function()
+        Config.Macro.PlaybackSpeedMult = tonumber(speedInput.Text) or 1.0
+    end)
+
+    MkLabel(macroPage, "Loop | Kecepatan",
+        UDim2.new(1, 0, 0, 16), UDim2.new(0, 0, 0, 100),
+        Color3.fromRGB(130, 130, 150), W.FontBody)
+
+    -- Jumlah aksi terekam
+    local actionCountLbl = MkLabel(macroPage, "Aksi terekam: 0",
+        UDim2.new(1, 0, 0, 18), UDim2.new(0, 0, 0, 152),
+        Color3.fromRGB(150, 200, 255))
+
+    -- ── Divider ──────────────────────────────────────────────────
+    local divider = Instance.new("Frame")
+    divider.Size = UDim2.new(1, 0, 0, 1)
+    divider.Position = UDim2.new(0, 0, 0, 176)
+    divider.BackgroundColor3 = Color3.fromRGB(50, 60, 90)
+    divider.BorderSizePixel = 0
+    divider.Parent = macroPage
+
+    MkLabel(macroPage, "── Visual Boost ──",
+        UDim2.new(1, 0, 0, 16), UDim2.new(0, 0, 0, 180),
+        Color3.fromRGB(100, 120, 180), W.FontBody)
+
+    -- ── Toggle helper ─────────────────────────────────────────────
+    local function MkToggle(parent, labelOn, labelOff, yPos, getState, onToggle)
+        local isOn = getState()
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, 0, 0, 28)
+        btn.Position = UDim2.new(0, 0, 0, yPos)
+        btn.BackgroundColor3 = isOn and W.SuccessColor or Color3.fromRGB(55, 55, 70)
+        btn.Text = isOn and ("✅ " .. labelOn) or ("⬜ " .. labelOff)
+        btn.TextColor3 = Color3.new(1, 1, 1)
+        btn.Font = W.FontBody
+        btn.TextScaled = true
+        btn.BorderSizePixel = 0
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+        btn.Parent = parent
+        btn.MouseButton1Click:Connect(function()
+            local newState = onToggle()
+            btn.BackgroundColor3 = newState and W.SuccessColor or Color3.fromRGB(55, 55, 70)
+            btn.Text = newState and ("✅ " .. labelOn) or ("⬜ " .. labelOff)
+        end)
+        return btn
+    end
+
+    -- Toggle: Polos NPC
+    MkToggle(macroPage,
+        "Polos NPC: ON", "Polos NPC: OFF", 200,
+        function() return Config.PolosNPC end,
+        function()
+            Config.PolosNPC = not Config.PolosNPC
+            if Config.PolosNPC then
+                task.spawn(FPSBooster.PolosAllNPC)
+            end
+            return Config.PolosNPC
+        end)
+
+    -- Toggle: Polos Player
+    MkToggle(macroPage,
+        "Polos Player: ON", "Polos Player: OFF", 232,
+        function() return Config.PolosPlayers end,
+        function()
+            Config.PolosPlayers = not Config.PolosPlayers
+            if Config.PolosPlayers then
+                task.spawn(FPSBooster.PolosAllPlayers)
+            end
+            return Config.PolosPlayers
+        end)
+
+    -- Toggle: Hilangkan Kabut
+    MkToggle(macroPage,
+        "No-Fog: ON", "No-Fog: OFF", 264,
+        function() return Config.DisableFog end,
+        function()
+            Config.DisableFog = not Config.DisableFog
+            if Config.DisableFog then
+                -- Terapkan ulang no-fog
+                pcall(function()
+                    Lighting.FogStart = 100000
+                    Lighting.FogEnd   = 100000
+                    for _, child in pairs(Lighting:GetChildren()) do
+                        if IsType(child, "Atmosphere") then
+                            child.Density = 0
+                            child.Haze    = 0
+                            child.Glare   = 0
+                            child.Offset  = 0
+                        end
+                    end
+                end)
+                Log("WIDGET", "🌫️ Kabut dinonaktifkan")
+            else
+                -- Kembalikan fog ke nilai default Roblox
+                pcall(function()
+                    Lighting.FogStart = 0
+                    Lighting.FogEnd   = 100000
+                end)
+                Log("WIDGET", "🌫️ Kabut dikembalikan")
+            end
+            return Config.DisableFog
+        end)
+
+    -- Update action count berkala
+    task.spawn(function()
+        while PlayerGui:FindFirstChild("MacroOverlayWidget") do
+            task.wait(0.5)
+            actionCountLbl.Text = "Aksi terekam: " .. #ActionRecorder.GetActions()
+            local prog = MacroExecutor.GetProgress()
+            loopLbl.Text = "Loop: " .. prog.loops .. " / " .. Config.Macro.LoopCount
+        end
+    end)
+
+    -- ── Halaman Tab: REKAMAN ──────────────────────────────────────
+    local recPage = Instance.new("Frame")
+    recPage.Name = "RecPage"
+    recPage.Size = UDim2.new(1, 0, 1, 0)
+    recPage.BackgroundTransparency = 1
+    recPage.Visible = false
+    recPage.Parent = content
+
+    local recStatusLbl = MkLabel(recPage, "⬜ Siap merekam",
+        UDim2.new(1, 0, 0, 28), UDim2.new(0, 0, 0, 0),
+        Color3.fromRGB(255, 200, 100), W.FontTitle)
+
+    local recTimeLbl = MkLabel(recPage, "Durasi: 0s",
+        UDim2.new(1, 0, 0, 22), UDim2.new(0, 0, 0, 30),
+        Color3.fromRGB(180, 180, 200))
+
+    local startRecBtn = MkButton(recPage, "🔴 Mulai Rekam",
+        UDim2.new(1, 0, 0, 36), UDim2.new(0, 0, 0, 58),
+        W.DangerColor, function()
+            if ActionRecorder.IsRecording() then return end
+            ActionRecorder.Start()
+            recStatusLbl.Text = "🔴 Merekam..."
+            recStatusLbl.TextColor3 = W.DangerColor
+            task.spawn(function()
+                local t0 = tick()
+                while ActionRecorder.IsRecording() do
+                    task.wait(0.5)
+                    recTimeLbl.Text = string.format("Durasi: %.1fs", tick() - t0)
+                end
+            end)
+        end)
+
+    local stopRecBtn = MkButton(recPage, "⏹ Hentikan",
+        UDim2.new(1, 0, 0, 36), UDim2.new(0, 0, 0, 100),
+        Color3.fromRGB(80, 80, 100), function()
+            if not ActionRecorder.IsRecording() then return end
+            ActionRecorder.Stop()
+            recStatusLbl.Text = "✅ Rekaman Disimpan"
+            recStatusLbl.TextColor3 = W.SuccessColor
+        end)
+
+    MkButton(recPage, "🗑 Hapus Rekaman",
+        UDim2.new(1, 0, 0, 30), UDim2.new(0, 0, 0, 144),
+        Color3.fromRGB(60, 60, 75), function()
+            ActionRecorder.Clear()
+            recStatusLbl.Text = "🗑 Rekaman dihapus"
+            recTimeLbl.Text = "Durasi: 0s"
+        end)
+
+    -- ── Halaman Tab: DATA ─────────────────────────────────────────
+    local dataPage = Instance.new("Frame")
+    dataPage.Name = "DataPage"
+    dataPage.Size = UDim2.new(1, 0, 1, 0)
+    dataPage.BackgroundTransparency = 1
+    dataPage.Visible = false
+    dataPage.Parent = content
+
+    MkLabel(dataPage, "Paste data CSV di bawah:",
+        UDim2.new(1, 0, 0, 20), UDim2.new(0, 0, 0, 0),
+        Color3.fromRGB(180, 180, 200), W.FontBody, Enum.TextXAlignment.Left)
+
+    local csvBox = Instance.new("TextBox")
+    csvBox.Size = UDim2.new(1, 0, 0, 100)
+    csvBox.Position = UDim2.new(0, 0, 0, 22)
+    csvBox.BackgroundColor3 = Color3.fromRGB(25, 25, 40)
+    csvBox.TextColor3 = Color3.fromRGB(200, 240, 200)
+    csvBox.PlaceholderText = "nama,email,pesan\nBudi,budi@mail.com,Halo\n..."
+    csvBox.Text = ""
+    csvBox.Font = Enum.Font.Code
+    csvBox.TextSize = 11
+    csvBox.TextWrapped = true
+    csvBox.ClearTextOnFocus = false
+    csvBox.MultiLine = true
+    csvBox.BorderSizePixel = 0
+    Instance.new("UICorner", csvBox).CornerRadius = UDim.new(0, 6)
+    csvBox.Parent = dataPage
+
+    local dataInfoLbl = MkLabel(dataPage, "Belum ada data dimuat",
+        UDim2.new(1, 0, 0, 20), UDim2.new(0, 0, 0, 128),
+        Color3.fromRGB(160, 200, 255))
+
+    MkButton(dataPage, "📥 Muat CSV",
+        UDim2.new(0.48, -2, 0, 30), UDim2.new(0, 0, 0, 152),
+        W.PrimaryColor, function()
+            local ok = DataHandler.LoadFromString(csvBox.Text)
+            if ok then
+                local info = DataHandler.Info()
+                dataInfoLbl.Text = info.total .. " baris | Kolom: " .. table.concat(info.headers, ", ")
+                dataInfoLbl.TextColor3 = W.SuccessColor
+            else
+                dataInfoLbl.Text = "❌ Format CSV tidak valid"
+                dataInfoLbl.TextColor3 = W.DangerColor
+            end
+        end)
+
+    MkButton(dataPage, "🔄 Reset Cursor",
+        UDim2.new(0.48, -2, 0, 30), UDim2.new(0.52, 2, 0, 152),
+        Color3.fromRGB(70, 70, 90), function()
+            DataHandler.Reset()
+            dataInfoLbl.Text = "Cursor direset — baris: 0 / " .. #DataHandler._rows
+        end)
+
+    -- ── Halaman Tab: KONDISI ──────────────────────────────────────
+    local condPage = Instance.new("Frame")
+    condPage.Name = "CondPage"
+    condPage.Size = UDim2.new(1, 0, 1, 0)
+    condPage.BackgroundTransparency = 1
+    condPage.Visible = false
+    condPage.Parent = content
+
+    MkLabel(condPage, "Monitor Kondisional",
+        UDim2.new(1, 0, 0, 24), UDim2.new(0, 0, 0, 0),
+        Color3.new(1,1,1), W.FontTitle)
+
+    local condStatusLbl = MkLabel(condPage, "Status: Tidak aktif",
+        UDim2.new(1, 0, 0, 20), UDim2.new(0, 0, 0, 26),
+        Color3.fromRGB(180, 180, 200))
+
+    MkButton(condPage, "▶ Aktifkan Monitor",
+        UDim2.new(1, 0, 0, 32), UDim2.new(0, 0, 0, 52),
+        W.SuccessColor, function()
+            ConditionalEngine.StartMonitor()
+            condStatusLbl.Text = "Status: ✅ Aktif"
+            condStatusLbl.TextColor3 = W.SuccessColor
+        end)
+
+    MkButton(condPage, "⏹ Nonaktifkan",
+        UDim2.new(1, 0, 0, 32), UDim2.new(0, 0, 0, 90),
+        W.DangerColor, function()
+            ConditionalEngine.StopMonitor()
+            condStatusLbl.Text = "Status: Tidak aktif"
+            condStatusLbl.TextColor3 = Color3.fromRGB(180, 180, 200)
+        end)
+
+    -- Daftar trigger
+    local triggerListLbl = MkLabel(condPage, "Trigger aktif: 0",
+        UDim2.new(1, 0, 0, 18), UDim2.new(0, 0, 0, 130),
+        Color3.fromRGB(160, 200, 255))
+
+    task.spawn(function()
+        while PlayerGui:FindFirstChild("MacroOverlayWidget") do
+            task.wait(1)
+            local count = 0
+            for _ in pairs(ConditionalEngine._triggers) do count += 1 end
+            triggerListLbl.Text = "Trigger aktif: " .. count
+        end
+    end)
+
+    -- ── Sistem Tab aktif/nonaktif ─────────────────────────────────
+    local pages = {
+        macro = macroPage, rekaman = recPage, data = dataPage, kondisi = condPage
+    }
+    local tabs = {}
+
+    local function SwitchTab(name)
+        FloatingWidget._activeTab = name
+        for pname, page in pairs(pages) do page.Visible = (pname == name) end
+        for tname, tb in pairs(tabs) do
+            tb.BackgroundColor3 = (tname == name)
+                and W.PrimaryColor
+                or Color3.fromRGB(40, 40, 55)
+        end
+    end
+
+    -- Buat 4 tab button
+    local tabNames = { "macro", "rekaman", "data", "kondisi" }
+    local tabLabels = { "Makro", "Rekam", "Data", "Cond" }
+    for i, tname in ipairs(tabNames) do
+        local tb = MkTab(tabBar, tabLabels[i],
+            UDim2.new((i-1)*0.25, (i==1 and 0 or 2), 0, 0),
+            function() SwitchTab(tname) end)
+        tabs[tname] = tb
+    end
+    SwitchTab("macro")  -- default
+
+    -- ── Minimize / Restore ────────────────────────────────────────
+    minBtn.MouseButton1Click:Connect(function()
+        FloatingWidget._minimized = not FloatingWidget._minimized
+        body.Visible = not FloatingWidget._minimized
+        panel.Size = FloatingWidget._minimized
+            and UDim2.new(0, panelW, 0, 36)
+            or  UDim2.new(0, panelW, 0, panelH)
+        minBtn.Text = FloatingWidget._minimized and "▲" or "─"
+    end)
+
+    -- ── FPS + Ping HUD (overlay terpisah, selalu visible) ─────────
+    local hudGui = Instance.new("ScreenGui")
+    hudGui.Name = "SafeBoosterHUD"
+    hudGui.ResetOnSpawn = false
+    hudGui.DisplayOrder = 998
+    hudGui.Parent = PlayerGui
+
+    local hudFrame = Instance.new("Frame")
+    hudFrame.Size = UDim2.new(0, 120, 0, 56)
+    hudFrame.Position = UDim2.new(0, 8, 0, 8)
+    hudFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 18)
+    hudFrame.BackgroundTransparency = 0.3
+    hudFrame.BorderSizePixel = 0
+    Instance.new("UICorner", hudFrame).CornerRadius = UDim.new(0, 8)
+    hudFrame.Parent = hudGui
+
+    local fpsLbl = MkLabel(hudFrame, "FPS: --", UDim2.new(1,0,0.5,0), UDim2.new(0,0,0,0),
+        Color3.new(1,1,1), W.FontTitle)
+    local pingLbl = MkLabel(hudFrame, "PING: --ms", UDim2.new(1,0,0.5,0), UDim2.new(0,0,0.5,0),
+        Color3.fromRGB(180,200,255), W.FontBody)
+
+    local lastT, frames = tick(), 0
+    RunService.RenderStepped:Connect(function()
+        frames += 1
+        local now = tick()
+        if now - lastT >= 0.5 then
+            fpsLbl.Text = "FPS: " .. math.floor(frames / (now - lastT))
+            frames, lastT = 0, now
+        end
+    end)
     task.spawn(function()
         while task.wait(2) do
             pcall(function()
-                PingLbl.Text = "PING: " .. math.floor(LocalPlayer:GetNetworkPing()*1000) .. "ms"
+                pingLbl.Text = "PING: " .. math.floor(LocalPlayer:GetNetworkPing() * 1000) .. "ms"
             end)
         end
     end)
 
-    Log("✅ HUD aktif")
+    FloatingWidget._gui = ScreenGui
+    Log("WIDGET", "✅ Floating widget aktif (" .. (isMobile and "Mobile" or "PC") .. ")")
 end
 
--- ══════════════════════════════════════════════════════════════════
---                      MAIN EXECUTION
--- ══════════════════════════════════════════════════════════════════
-print("[SafeBooster] Starting lightweight FPS booster...")
 
-MobileBoost()
-ApplyRenderAndLighting()
-CreateHUD()
+-- ══════════════════════════════════════════════════════════════════
+--  MAIN EXECUTION
+-- ══════════════════════════════════════════════════════════════════
 
--- Scan awal dijalankan di background, TIDAK blocking main thread
+print("╔══════════════════════════════════════════╗")
+print("║  SafeBooster + Macro System v2.0 Init   ║")
+print("╚══════════════════════════════════════════╝")
+
+-- [B] FPS Booster
+FPSBooster.MobileBoost()
+FPSBooster.ApplyRenderAndLighting()
+
+-- [G] Widget UI (dijalankan setelah PlayerGui siap)
 task.spawn(function()
-    task.wait(2) -- beri waktu game load dulu sebelum scan
-    BatchScanWorkspace()
-    StartThrottledWatcher()  -- watcher baru aktif SETELAH scan awal selesai
-    Log("✅ SafeBooster fully active!")
+    task.wait(0.5)
+    FloatingWidget.Build()
+end)
+
+-- [B] Batch scan + watcher di background
+task.spawn(function()
+    task.wait(2)
+    FPSBooster.BatchScanWorkspace()
+    FPSBooster.StartThrottledWatcher()
+
+    -- [B2] Polos NPC & Player (setelah workspace selesai di-scan)
+    FPSBooster.PolosAllNPC()
+    FPSBooster.PolosAllPlayers()
+    FPSBooster.StartPolosWatcher()
+
+    Log("SYSTEM", "✅ SafeBooster + Polos + No-Fog sepenuhnya aktif!")
 end)
