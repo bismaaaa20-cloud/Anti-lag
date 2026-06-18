@@ -212,32 +212,53 @@ end
 --]]
 
 -- Terapkan efek polos ke satu karakter (Model dengan Humanoid)
+-- GUARD: skip jika object sudah di-destroy, parent NULL, atau terkunci server
 local function PolosCharacter(character)
+    -- Guard 1: nil check
     if not character then return end
-    -- Jangan ubah karakter sendiri jika tidak dikehendaki
+    -- Guard 2: jangan sentuh karakter sendiri
     if character == LocalPlayer.Character then return end
+    -- Guard 3: pastikan karakter masih punya parent (belum di-destroy)
+    local ok, parentVal = pcall(function() return character.Parent end)
+    if not ok or parentVal == nil then return end
+    -- Guard 4: pastikan Humanoid masih ada & hidup
+    local hum = character:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
 
-    pcall(function()
-        for _, part in ipairs(character:GetDescendants()) do
-            pcall(function()
-                if IsType(part, "BasePart") then
-                    part.Material  = Enum.Material.SmoothPlastic
-                    part.CastShadow = false
-                    if Config.PolosColor then
-                        part.Color = Config.PolosColor
-                    end
-                elseif IsType(part, "Decal") or IsType(part, "Texture") then
-                    part.Transparency = 1
-                elseif IsType(part, "ParticleEmitter") or IsType(part, "Trail")
-                    or IsType(part, "Sparkles") or IsType(part, "Smoke") or IsType(part, "Fire") then
-                    part.Enabled = false
-                elseif IsType(part, "SpecialMesh") then
-                    -- Pertahankan bentuk mesh (kepala, badan) tapi hapus texture-nya
-                    part.TextureId = ""
-                end
-            end)
-        end
+    -- Ambil daftar descendants sekali — hindari iterasi saat object hilang
+    local descendants
+    local getOk = pcall(function()
+        descendants = character:GetDescendants()
     end)
+    if not getOk or not descendants then return end
+
+    for _, part in ipairs(descendants) do
+        -- Guard per-part: cek parent sebelum sentuh
+        pcall(function()
+            -- Abaikan jika part sudah tidak punya parent (sudah di-destroy)
+            if part.Parent == nil then return end
+
+            if IsType(part, "BasePart") then
+                -- Skip part yang parentnya bukan karakter (locked/replicated)
+                -- Hanya sentuh material & shadow, tidak pindahkan parent
+                SafeSet(part, "Material",   Enum.Material.SmoothPlastic)
+                SafeSet(part, "CastShadow", false)
+                if Config.PolosColor then
+                    SafeSet(part, "Color", Config.PolosColor)
+                end
+
+            elseif IsType(part, "Decal") or IsType(part, "Texture") then
+                SafeSet(part, "Transparency", 1)
+
+            elseif IsType(part, "ParticleEmitter") or IsType(part, "Trail")
+                or IsType(part, "Sparkles") or IsType(part, "Smoke") or IsType(part, "Fire") then
+                SafeSet(part, "Enabled", false)
+
+            elseif IsType(part, "SpecialMesh") then
+                SafeSet(part, "TextureId", "")
+            end
+        end)
+    end
 end
 
 -- Polos semua NPC (karakter di Workspace yang bukan player)
@@ -249,9 +270,17 @@ function FPSBooster.PolosAllNPC()
     end
 
     local count = 0
-    for _, obj in ipairs(Workspace:GetDescendants()) do
+    -- Snapshot descendants sebelum iterasi agar aman jika ada yang di-destroy
+    local all
+    pcall(function() all = Workspace:GetDescendants() end)
+    if not all then return end
+
+    for _, obj in ipairs(all) do
         pcall(function()
-            if IsType(obj, "Model") and obj:FindFirstChildOfClass("Humanoid")
+            -- Guard: pastikan obj masih punya parent
+            if obj.Parent == nil then return end
+            if IsType(obj, "Model")
+            and obj:FindFirstChildOfClass("Humanoid")
             and not playerChars[obj] then
                 PolosCharacter(obj)
                 count += 1
@@ -276,25 +305,27 @@ end
 
 -- Watcher realtime: setiap player baru / karakter baru di-polos otomatis
 function FPSBooster.StartPolosWatcher()
-    -- Hook setiap player yang sudah ada & yang bergabung nanti
     local function HookPlayer(player)
         if player == LocalPlayer then return end
-        -- Karakter sudah ada sekarang
         if player.Character then
             PolosCharacter(player.Character)
         end
-        -- Karakter yang respawn nanti
         player.CharacterAdded:Connect(function(char)
-            task.wait(0.5)  -- tunggu karakter fully load
-            PolosCharacter(char)
-            Log("POLOS", "👤 Auto-polos: " .. player.Name)
+            -- Tunggu lebih lama agar karakter fully replicated sebelum disentuh
+            task.wait(1.5)
+            -- Guard: pastikan char masih valid setelah wait
+            local ok, p = pcall(function() return char.Parent end)
+            if ok and p ~= nil then
+                PolosCharacter(char)
+                Log("POLOS", "👤 Auto-polos: " .. player.Name)
+            end
         end)
     end
 
     for _, p in ipairs(Players:GetPlayers()) do HookPlayer(p) end
     Players.PlayerAdded:Connect(HookPlayer)
 
-    -- Re-scan NPC berkala (untuk NPC yang spawn terlambat)
+    -- Re-scan NPC berkala
     if Config.PolosNPC then
         task.spawn(function()
             while true do
@@ -305,18 +336,25 @@ function FPSBooster.StartPolosWatcher()
     end
 
     -- Watcher DescendantAdded untuk NPC baru
+    -- Perbesar delay: tunggu NPC selesai di-replicate server sebelum disentuh
     Workspace.DescendantAdded:Connect(function(obj)
         pcall(function()
-            if IsType(obj, "Model") and obj:FindFirstChildOfClass("Humanoid") then
-                -- Cek apakah ini NPC (bukan player)
-                local isPlayer = false
-                for _, p in ipairs(Players:GetPlayers()) do
-                    if p.Character == obj then isPlayer = true; break end
-                end
-                if not isPlayer and Config.PolosNPC then
-                    task.wait(0.3)
-                    PolosCharacter(obj)
-                end
+            if not IsType(obj, "Model") then return end
+            if obj:FindFirstChildOfClass("Humanoid") == nil then return end
+
+            local isPlayer = false
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p.Character == obj then isPlayer = true; break end
+            end
+            if isPlayer or not Config.PolosNPC then return end
+
+            -- Tunggu NPC selesai di-spawn sebelum sentuh property-nya
+            task.wait(1.0)
+
+            -- Guard setelah wait: pastikan NPC masih ada
+            local ok, parentVal = pcall(function() return obj.Parent end)
+            if ok and parentVal ~= nil then
+                PolosCharacter(obj)
             end
         end)
     end)
