@@ -1,344 +1,281 @@
 --[[
-╔══════════════════════════════════════════════════════════════════╗
-║              SafeBooster FPS v3.0 — Clean Edition              ║
-║  [A] Core Engine  |  [B] FPS Booster  |  [B2] Polos System    ║
-║  Fitur: No-Shadow | No-FX | No-Fog | Polos NPC & Player | HUD ║
-╚══════════════════════════════════════════════════════════════════╝
---]]
+	=========================================================================
+	 ULTIMATE FPS BOOSTER SCRIPT - ROBLOX (LUAU)
+	=========================================================================
+	Jenis Script : LocalScript
+	Lokasi       : StarterPlayer > StarterPlayerScripts
+	              (WAJIB LocalScript, bukan Script/ServerScript, karena semua
+	               optimasi rendering hanya berlaku di sisi client)
 
-local RunService       = game:GetService("RunService")
-local Players          = game:GetService("Players")
-local Lighting         = game:GetService("Lighting")
-local Workspace        = game:GetService("Workspace")
-local UserInputService = game:GetService("UserInputService")
+	CATATAN PENTING SEBELUM PAKAI:
+	Roblox men-sandbox fungsi collectgarbage(). Berbeda dengan Lua/LuaJIT
+	standar, di Roblox HANYA argumen "count" yang berfungsi.
+	Argumen seperti "collect", "stop", "setpause", "setstepmul" TIDAK
+	tersedia dan akan memunculkan error jika dipanggil. Jadi bagian GC di
+	bawah ini kita akali dengan cara lain: meniadakan alokasi tabel baru
+	setiap frame (root penyebab GC sibuk), bukan mengatur GC itu sendiri.
+	Ini pendekatan yang jauh lebih efektif di Roblox dibanding memaksa GC.
+	=========================================================================
+]]
+
+--=========================================================================
+-- BAGIAN 0: CACHING SERVICE & FUNGSI (Micro-Optimization / Pilar 3)
+--=========================================================================
+-- Semua service & fungsi yang sering dipanggil di-cache ke variabel local.
+-- Ini mempercepat lookup karena local variable diakses lewat register,
+-- sedangkan global/Service:GetService() harus lewat hash table lookup.
+
+local RunService        = game:GetService("RunService")
+local Players           = game:GetService("Players")
+local Lighting          = game:GetService("Lighting")
+local Workspace          = game:GetService("Workspace")
+local UserGameSettings  = UserSettings():GetService("UserGameSettings")
 
 local LocalPlayer = Players.LocalPlayer
-local Camera      = Workspace.CurrentCamera
-local PlayerGui   = LocalPlayer.PlayerGui
+local Camera       = Workspace.CurrentCamera
 
-local function SafeSet(obj, prop, val) pcall(function() obj[prop] = val end) end
-local function IsType(obj, t) local ok, r = pcall(function() return obj:IsA(t) end) return ok and r end
-local function IsMobile() return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled end
-local function Log(tag, msg) print(string.format("[%s] %s", tag, msg)) end
+-- Cache fungsi math yang sering dipakai supaya tidak lookup ke tabel math tiap kali
+local mFloor = math.floor
+local mHuge  = math.huge
 
-local Config = {
-    CameraFOV              = 70,
-    ForceSmoothPlastic     = true,
-    DisableDecals          = true,
-    DisableShadows         = true,
-    DisableBloom           = true,
-    DisableBlur            = true,
-    DisableSunRays         = true,
-    DisableColorCorrection = true,
-    DisableParticles       = true,
-    DisableTrails          = true,
-    DisableSmoke           = true,
-    DisableFire            = true,
-    DisableSparks          = true,
-    KillLights             = true,
-    DisableFog             = true,
-    PolosNPC               = true,
-    PolosPlayers           = true,
-    PolosColor             = nil,
-    PolosScanInterval      = 3.0,
-    BatchSize              = 150,
-    BatchDelay             = 0.03,
-    WatcherQueueDelay      = 0.5,
-    WatcherMaxPerTick      = 20,
-}
+-- Cache fungsi tabel
+local tInsert = table.insert
+local tRemove = table.remove
 
-local FPSBooster = {}
+print("[FPS BOOSTER] Modul optimasi dimulai...")
 
-function FPSBooster.ApplyRenderAndLighting()
-    pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
-    SafeSet(Camera, "FieldOfView", Config.CameraFOV)
-    SafeSet(Lighting, "GlobalShadows", false)
-    for _, fx in pairs(Lighting:GetChildren()) do
-        pcall(function()
-            if Config.DisableBloom and IsType(fx, "BloomEffect") then fx:Destroy()
-            elseif Config.DisableBlur and IsType(fx, "BlurEffect") then fx:Destroy()
-            elseif Config.DisableSunRays and IsType(fx, "SunRaysEffect") then fx:Destroy()
-            elseif Config.DisableColorCorrection and IsType(fx, "ColorCorrectionEffect") then fx:Destroy()
-            end
-        end)
-    end
-    if Config.DisableFog then
-        pcall(function()
-            Lighting.FogStart = 100000
-            Lighting.FogEnd   = 100000
-        end)
-        for _, child in pairs(Lighting:GetChildren()) do
-            pcall(function()
-                if IsType(child, "Atmosphere") then
-                    child.Density = 0
-                    child.Haze    = 0
-                    child.Glare   = 0
-                    child.Offset  = 0
-                end
-            end)
-        end
-        Log("FPS", "Kabut dihilangkan")
-    end
-    Log("FPS", "Render & Lighting applied")
+
+--=========================================================================
+-- BAGIAN 1: PENGGANTI "GC MANIPULATION" -> ANTI-ALOKASI TABEL PER FRAME
+--=========================================================================
+-- [RISIKO: AMAN]
+-- Karena setpause/setstepmul tidak bisa diatur di Roblox, strategi terbaik
+-- adalah MENGURANGI SAMPAH yang perlu dibersihkan GC. Kita sediakan modul
+-- monitor memori + fungsi util agar developer TIDAK membuat {} baru
+-- setiap frame (itulah penyebab utama micro-stutter akibat GC di Roblox).
+
+local MemoryMonitor = {}
+MemoryMonitor._lastCheck = 0
+MemoryMonitor._interval  = 5 -- detik, cek tiap 5 detik, jangan tiap frame
+
+function MemoryMonitor:Check(dtNow)
+	if dtNow - self._lastCheck < self._interval then return end
+	self._lastCheck = dtNow
+
+	-- collectgarbage("count") mengembalikan memori Lua terpakai dalam KB
+	local memKB = collectgarbage("count")
+	if memKB > 300000 then -- ambang 300 MB, sesuaikan dgn game kamu
+		warn(string.format("[FPS BOOSTER] Memori Lua tinggi: %.2f MB - cek kebocoran memori!", memKB / 1024))
+	end
 end
 
-function FPSBooster.MobileBoost()
-    if not IsMobile() then Log("FPS", "Mode PC"); return end
-    Log("FPS", "Mode Mobile")
-    pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+-- Contoh util "reuse table" alih-alih bikin baru tiap frame:
+-- SALAH:  RunService.Heartbeat:Connect(function() local t = {} ... end)
+-- BENAR:  siapkan tabel sekali di luar loop, lalu clear isinya tiap frame:
+local function ClearTable(t)
+	for k in pairs(t) do
+		t[k] = nil
+	end
+	return t
 end
 
-function FPSBooster.OptimizeObject(obj)
-    pcall(function()
-        if IsType(obj, "BasePart") then
-            if Config.DisableShadows     then obj.CastShadow = false end
-            if Config.ForceSmoothPlastic then obj.Material = Enum.Material.SmoothPlastic end
-            return
-        end
-        if Config.DisableDecals and (IsType(obj, "Decal") or IsType(obj, "Texture")) then obj.Transparency = 1; return end
-        if Config.DisableParticles and IsType(obj, "ParticleEmitter") then obj.Enabled = false; return end
-        if Config.DisableTrails    and IsType(obj, "Trail")           then obj.Enabled = false; return end
-        if Config.DisableSmoke     and IsType(obj, "Smoke")           then obj.Enabled = false; return end
-        if Config.DisableFire      and IsType(obj, "Fire")            then obj.Enabled = false; return end
-        if Config.DisableSparks    and IsType(obj, "Sparkles")        then obj.Enabled = false; return end
-        if Config.KillLights then
-            if IsType(obj, "PointLight") or IsType(obj, "SpotLight") or IsType(obj, "SurfaceLight") then
-                obj.Brightness = 0
-            end
-        end
-    end)
+
+--=========================================================================
+-- BAGIAN 2: RENDERING PIPELINE DOWNSCALE (Pilar 2)
+--=========================================================================
+-- [RISIKO: SEDANG] -> Mengubah tampilan visual game secara signifikan.
+-- Beberapa properti (seperti GlobalShadows) hanya bisa diubah lewat script
+-- jika kamu adalah developer game tsb (bukan exploit di game orang lain).
+
+local RenderOptimizer = {}
+
+function RenderOptimizer:LowerGraphicsQuality()
+	-- Turunkan quality level bawaan Roblox (1-10), 1 = paling ringan
+	-- Ini legal & resmi karena memakai API UserGameSettings, bukan exploit.
+	pcall(function()
+		UserGameSettings.SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1
+	end)
 end
 
-function FPSBooster.BatchScanWorkspace()
-    local all = Workspace:GetDescendants()
-    local total = #all
-    Log("FPS", "Scan "..total.." object")
-    for i = 1, total, Config.BatchSize do
-        local batchEnd = math.min(i + Config.BatchSize - 1, total)
-        for j = i, batchEnd do FPSBooster.OptimizeObject(all[j]) end
-        task.wait(Config.BatchDelay)
-    end
-    Log("FPS", "Scan selesai")
+function RenderOptimizer:DisableHeavyLightingEffects()
+	-- Matikan post-processing effect berat (Bloom, Blur, DOF, SunRays, ColorCorrection)
+	local heavyEffects = {"BloomEffect", "BlurEffect", "DepthOfFieldEffect", "SunRaysEffect", "ColorCorrectionEffect"}
+	for _, effectName in ipairs(heavyEffects) do
+		local fx = Lighting:FindFirstChildWhichIsA(effectName)
+		if fx then
+			fx.Enabled = false
+		end
+	end
+	-- Matikan shadow global (drastis menaikkan FPS di device rendah)
+	Lighting.GlobalShadows = false
+	Lighting.FogEnd = 100000 -- fog jarak jauh dimatikan efeknya
 end
 
-function FPSBooster.StartThrottledWatcher()
-    local watchQueue, queueSize = {}, 0
-    Workspace.DescendantAdded:Connect(function(obj)
-        if IsType(obj,"BasePart") or IsType(obj,"ParticleEmitter") or IsType(obj,"Trail")
-        or IsType(obj,"Smoke") or IsType(obj,"Fire") or IsType(obj,"Sparkles")
-        or IsType(obj,"Decal") or IsType(obj,"Texture") or IsType(obj,"PointLight") or IsType(obj,"SpotLight") then
-            queueSize += 1; watchQueue[queueSize] = obj
-        end
-    end)
-    task.spawn(function()
-        while true do
-            task.wait(Config.WatcherQueueDelay)
-            local processed = 0
-            while queueSize > 0 and processed < Config.WatcherMaxPerTick do
-                local obj = watchQueue[queueSize]
-                watchQueue[queueSize] = nil; queueSize -= 1
-                if obj and obj.Parent then FPSBooster.OptimizeObject(obj) end
-                processed += 1
-            end
-        end
-    end)
-    Log("FPS", "Watcher aktif")
+function RenderOptimizer:FlattenMaterials(root)
+	-- Ganti semua material berat (Neon custom, Glass, dsb) jadi SmoothPlastic
+	-- HANYA jalankan sekali saat load, JANGAN di loop RenderStepped!
+	for _, obj in ipairs(root:GetDescendants()) do
+		if obj:IsA("BasePart") then
+			obj.Material = Enum.Material.SmoothPlastic
+			obj.Reflectance = 0
+		elseif obj:IsA("ParticleEmitter") then
+			-- Turunkan rate partikel alih-alih menghapus total (opsional, lebih aman)
+			obj.Rate = obj.Rate * 0.25
+		end
+	end
 end
 
--- POLOS SYSTEM
-local BODY_PARTS = {
-    HumanoidRootPart=true, Head=true, Torso=true,
-    UpperTorso=true, LowerTorso=true,
-    ["Left Arm"]=true,  ["Right Arm"]=true,
-    ["Left Leg"]=true,  ["Right Leg"]=true,
-    ["Left Hand"]=true, ["Right Hand"]=true,
-    ["Left Foot"]=true, ["Right Foot"]=true,
-    ["Left UpperArm"]=true,  ["Right UpperArm"]=true,
-    ["Left LowerArm"]=true,  ["Right LowerArm"]=true,
-    ["Left UpperLeg"]=true,  ["Right UpperLeg"]=true,
-    ["Left LowerLeg"]=true,  ["Right LowerLeg"]=true,
-}
+-- Dynamic LOD sederhana: sembunyikan part yang jauh dari kamera
+local LOD_DISTANCE = 150 -- studs
+local lodTargets = {} -- cache referensi part yang mau di-LOD, isi manual/tag
 
-local function PolosPart(part)
-    pcall(function()
-        if part.Parent == nil then return end
-        SafeSet(part, "CastShadow", false)
-        local mat
-        pcall(function() mat = part.Material end)
-        if mat and mat ~= Enum.Material.ForceField and mat ~= Enum.Material.Neon then
-            SafeSet(part, "Material", Enum.Material.SmoothPlastic)
-        end
-        if Config.PolosColor then SafeSet(part, "Color", Config.PolosColor) end
-        for _, child in ipairs(part:GetChildren()) do
-            pcall(function()
-                if IsType(child, "Decal") or IsType(child, "Texture") then
-                    SafeSet(child, "Transparency", 1)
-                elseif IsType(child,"ParticleEmitter") or IsType(child,"Sparkles")
-                    or IsType(child,"Fire") or IsType(child,"Smoke") then
-                    SafeSet(child, "Enabled", false)
-                end
-            end)
-        end
-    end)
+local function UpdateLOD()
+	local camPos = Camera.CFrame.Position
+	for _, part in ipairs(lodTargets) do
+		if part and part.Parent then
+			local dist = (part.Position - camPos).Magnitude
+			part.Transparency = (dist > LOD_DISTANCE) and 1 or 0
+			-- CanCollide juga dimatikan biar physics engine gak proses part jauh
+			part.CanCollide = (dist > LOD_DISTANCE) and false or part.CanCollide
+		end
+	end
 end
 
-local function PolosCharacter(character)
-    if not character then return end
-    if character == LocalPlayer.Character then return end
-    local ok, parentVal = pcall(function() return character.Parent end)
-    if not ok or parentVal == nil then return end
-    if not character:FindFirstChildOfClass("Humanoid") then return end
-    if not character:FindFirstChild("HumanoidRootPart") then return end
-    local children
-    pcall(function() children = character:GetChildren() end)
-    if not children then return end
-    for _, child in ipairs(children) do
-        pcall(function()
-            if child.Parent == nil then return end
-            if IsType(child, "BasePart") and BODY_PARTS[child.Name] then
-                PolosPart(child)
-            elseif IsType(child, "Accessory") or IsType(child, "Hat") then
-                local handle = child:FindFirstChild("Handle")
-                if handle and IsType(handle, "BasePart") then PolosPart(handle) end
-            elseif IsType(child, "Shirt") then SafeSet(child, "ShirtTemplate", "")
-            elseif IsType(child, "Pants") then SafeSet(child, "PantsTemplate", "")
-            elseif IsType(child, "ShirtGraphic") then SafeSet(child, "Graphic", "")
-            end
-        end)
-    end
-end
 
-function FPSBooster.PolosAllNPC()
-    if not Config.PolosNPC then return end
-    local playerChars = {}
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p.Character then playerChars[p.Character] = true end
-    end
-    local all
-    pcall(function() all = Workspace:GetDescendants() end)
-    if not all then return end
-    local count = 0
-    for _, obj in ipairs(all) do
-        pcall(function()
-            if obj.Parent == nil then return end
-            if IsType(obj,"Model") and obj:FindFirstChildOfClass("Humanoid") and not playerChars[obj] then
-                PolosCharacter(obj); count += 1
-            end
-        end)
-    end
-    Log("POLOS", "NPC dipoloskan: "..count)
-end
+--=========================================================================
+-- BAGIAN 3: EVENT THROTTLING & TIMER (Pilar 4)
+--=========================================================================
+-- [RISIKO: AMAN]
+-- JANGAN taruh logika non-visual di Heartbeat/RenderStepped mentah (60x/detik).
+-- Gunakan accumulator delta-time supaya logic berjalan misal tiap 0.2 detik.
 
-function FPSBooster.PolosAllPlayers()
-    if not Config.PolosPlayers then return end
-    local count = 0
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character then
-            PolosCharacter(player.Character); count += 1
-        end
-    end
-    Log("POLOS", "Player dipoloskan: "..count)
-end
+local THROTTLE_INTERVAL = 0.2 -- detik, sesuaikan kebutuhan
+local _accumulator = 0
 
-function FPSBooster.StartPolosWatcher()
-    local function HookPlayer(player)
-        if player == LocalPlayer then return end
-        if player.Character then PolosCharacter(player.Character) end
-        player.CharacterAdded:Connect(function(char)
-            task.wait(1.5)
-            local ok, p = pcall(function() return char.Parent end)
-            if ok and p ~= nil then PolosCharacter(char) end
-        end)
-    end
-    for _, p in ipairs(Players:GetPlayers()) do HookPlayer(p) end
-    Players.PlayerAdded:Connect(HookPlayer)
-    if Config.PolosNPC then
-        task.spawn(function()
-            while true do
-                task.wait(Config.PolosScanInterval)
-                FPSBooster.PolosAllNPC()
-            end
-        end)
-    end
-    Workspace.DescendantAdded:Connect(function(obj)
-        pcall(function()
-            if not IsType(obj, "Model") then return end
-            if not obj:FindFirstChildOfClass("Humanoid") then return end
-            local isPlayer = false
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p.Character == obj then isPlayer = true; break end
-            end
-            if isPlayer or not Config.PolosNPC then return end
-            task.wait(1.0)
-            local ok, parentVal = pcall(function() return obj.Parent end)
-            if ok and parentVal ~= nil then PolosCharacter(obj) end
-        end)
-    end)
-    Log("POLOS", "Polos watcher aktif")
-end
+-- Cache referensi objek SEKALI di awal, jangan FindFirstChild tiap frame
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local Humanoid  = Character:WaitForChild("Humanoid")
+local RootPart  = Character:WaitForChild("HumanoidRootPart")
 
--- HUD
-local function CreateHUD()
-    local old = PlayerGui:FindFirstChild("SafeBoosterHUD")
-    if old then old:Destroy() end
-    local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "SafeBoosterHUD"
-    ScreenGui.ResetOnSpawn = false
-    ScreenGui.DisplayOrder = 999
-    ScreenGui.Parent = PlayerGui
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 130, 0, 56)
-    frame.Position = UDim2.new(0, 8, 0, 8)
-    frame.BackgroundColor3 = Color3.fromRGB(10, 10, 18)
-    frame.BackgroundTransparency = 0.25
-    frame.BorderSizePixel = 0
-    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
-    frame.Parent = ScreenGui
-    local fpsLbl = Instance.new("TextLabel")
-    fpsLbl.Size = UDim2.new(1, 0, 0.5, 0)
-    fpsLbl.BackgroundTransparency = 1
-    fpsLbl.Text = "FPS: --"
-    fpsLbl.TextColor3 = Color3.new(1, 1, 1)
-    fpsLbl.Font = Enum.Font.GothamBold
-    fpsLbl.TextScaled = true
-    fpsLbl.Parent = frame
-    local pingLbl = Instance.new("TextLabel")
-    pingLbl.Size = UDim2.new(1, 0, 0.5, 0)
-    pingLbl.Position = UDim2.new(0, 0, 0.5, 0)
-    pingLbl.BackgroundTransparency = 1
-    pingLbl.Text = "PING: --ms"
-    pingLbl.TextColor3 = Color3.fromRGB(160, 200, 255)
-    pingLbl.Font = Enum.Font.Gotham
-    pingLbl.TextScaled = true
-    pingLbl.Parent = frame
-    local lastT, frames = tick(), 0
-    RunService.RenderStepped:Connect(function()
-        frames += 1
-        local now = tick()
-        if now - lastT >= 0.5 then
-            fpsLbl.Text = "FPS: "..math.floor(frames / (now - lastT))
-            frames, lastT = 0, now
-        end
-    end)
-    task.spawn(function()
-        while task.wait(2) do
-            pcall(function()
-                pingLbl.Text = "PING: "..math.floor(LocalPlayer:GetNetworkPing() * 1000).."ms"
-            end)
-        end
-    end)
-end
-
--- MAIN
-FPSBooster.MobileBoost()
-FPSBooster.ApplyRenderAndLighting()
-CreateHUD()
-task.spawn(function()
-    task.wait(2)
-    FPSBooster.BatchScanWorkspace()
-    FPSBooster.StartThrottledWatcher()
-    FPSBooster.PolosAllNPC()
-    FPSBooster.PolosAllPlayers()
-    FPSBooster.StartPolosWatcher()
-    Log("SYSTEM", "SafeBooster FPS v3.0 aktif!")
+LocalPlayer.CharacterAdded:Connect(function(newChar)
+	Character = newChar
+	Humanoid  = newChar:WaitForChild("Humanoid")
+	RootPart  = newChar:WaitForChild("HumanoidRootPart")
 end)
+
+RunService.Heartbeat:Connect(function(dt)
+	_accumulator += dt
+
+	-- Update LOD & memory monitor TIDAK setiap frame, tapi tiap THROTTLE_INTERVAL
+	if _accumulator >= THROTTLE_INTERVAL then
+		_accumulator = 0
+		UpdateLOD()
+		MemoryMonitor:Check(os.clock())
+	end
+end)
+
+
+--=========================================================================
+-- BAGIAN 4: OBJECT POOLING FRAMEWORK (Pilar 5)
+--=========================================================================
+-- [RISIKO: AMAN]
+-- Dipakai untuk efek yang sering muncul-hilang: peluru, hit-effect,
+-- damage text, dll. Alih-alih :Destroy() lalu Instance.new() lagi
+-- (mahal & bikin GC kerja keras), objek didaur ulang dari pool.
+
+local ObjectPool = {}
+ObjectPool.__index = ObjectPool
+
+function ObjectPool.new(templateInstance, prewarmCount)
+	local self = setmetatable({}, ObjectPool)
+	self._template = templateInstance
+	self._pool     = {} -- array-part, indeks numerik berurutan (lebih cepat drpd hash-part)
+	self._active   = {}
+
+	-- Prewarm: siapkan objek di awal biar tidak ada lag spike saat gameplay
+	for i = 1, (prewarmCount or 10) do
+		local clone = templateInstance:Clone()
+		clone.Parent = nil -- simpan di luar Workspace dulu (tidak dirender)
+		tInsert(self._pool, clone)
+	end
+
+	return self
+end
+
+function ObjectPool:Get(parent, cframe)
+	local obj = tRemove(self._pool) -- ambil dari belakang (O(1), paling cepat)
+	if not obj then
+		-- Pool kosong -> terpaksa clone baru (jarang terjadi jika prewarm cukup)
+		obj = self._template:Clone()
+	end
+	obj.CFrame  = cframe
+	obj.Parent  = parent
+	tInsert(self._active, obj)
+	return obj
+end
+
+function ObjectPool:Return(obj)
+	obj.Parent = nil -- "matikan" objek, JANGAN Destroy()
+	for i, activeObj in ipairs(self._active) do
+		if activeObj == obj then
+			tRemove(self._active, i)
+			break
+		end
+	end
+	tInsert(self._pool, obj)
+end
+
+-- Contoh pemakaian (uncomment & sesuaikan template kamu):
+-- local bulletTemplate = ReplicatedStorage:WaitForChild("BulletTemplate")
+-- local BulletPool = ObjectPool.new(bulletTemplate, 30)
+-- local bullet = BulletPool:Get(Workspace, muzzlePos)
+-- task.delay(2, function() BulletPool:Return(bullet) end)
+
+
+--=========================================================================
+-- BAGIAN 5: WEAK TABLES UNTUK CACHE (Pilar 6)
+--=========================================================================
+-- [RISIKO: AMAN]
+-- Dipakai untuk cache referensi objek (misal data per-Player atau per-Part)
+-- supaya kalau objek aslinya sudah dihancurkan game, cache-nya otomatis
+-- ikut "dilupakan" GC dan tidak menahan memori selamanya (mencegah leak).
+
+local WeakCache = setmetatable({}, { __mode = "k" })
+-- __mode = "k" -> key dalam tabel ini adalah weak reference
+-- Artinya kalau instance Part/Player di-Destroy, entry ini otomatis
+-- hilang dari WeakCache saat GC jalan, TANPA perlu kita hapus manual.
+
+local function CacheData(instanceKey, data)
+	WeakCache[instanceKey] = data
+end
+
+local function GetCachedData(instanceKey)
+	return WeakCache[instanceKey]
+end
+
+
+--=========================================================================
+-- BAGIAN 6: PHYSICS / COLLISION TWEAK (Pilar 7)
+--=========================================================================
+-- [RISIKO: SEDANG] -> Bisa mengubah rasa gameplay jika radius terlalu kecil.
+-- Batasi collision check hanya untuk part yang dekat pemain.
+
+local COLLISION_CHECK_RADIUS = 100
+
+local function ShouldProcessPhysics(part)
+	if not RootPart then return true end
+	local dist = (part.Position - RootPart.Position).Magnitude
+	return dist <= COLLISION_CHECK_RADIUS
+end
+-- Pakai ShouldProcessPhysics(part) sebagai gate sebelum raycasting manual/
+-- custom collision logic kamu, supaya part jauh tidak ikut dihitung.
+
+
+--=========================================================================
+-- EKSEKUSI INISIALISASI
+--=========================================================================
+RenderOptimizer:LowerGraphicsQuality()
+RenderOptimizer:DisableHeavyLightingEffects()
+-- RenderOptimizer:FlattenMaterials(Workspace) -- aktifkan manual, cukup berat dijalankan sekali
+
+print("[FPS BOOSTER] Semua modul aktif. Selamat bermain dengan FPS lebih stabil!")
