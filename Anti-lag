@@ -1,77 +1,105 @@
 --[[
 	=========================================================================
-	 ULTIMATE FPS BOOSTER SCRIPT - ROBLOX (LUAU)
+	 ULTIMATE FPS BOOSTER SCRIPT - ROBLOX (LUAU)  |  v2 - STABILITY PATCH
 	=========================================================================
 	Jenis Script : LocalScript
 	Lokasi       : StarterPlayer > StarterPlayerScripts
-	              (WAJIB LocalScript, bukan Script/ServerScript, karena semua
-	               optimasi rendering hanya berlaku di sisi client)
 
-	CATATAN PENTING SEBELUM PAKAI:
-	Roblox men-sandbox fungsi collectgarbage(). Berbeda dengan Lua/LuaJIT
-	standar, di Roblox HANYA argumen "count" yang berfungsi.
-	Argumen seperti "collect", "stop", "setpause", "setstepmul" TIDAK
-	tersedia dan akan memunculkan error jika dipanggil. Jadi bagian GC di
-	bawah ini kita akali dengan cara lain: meniadakan alokasi tabel baru
-	setiap frame (root penyebab GC sibuk), bukan mengatur GC itu sendiri.
-	Ini pendekatan yang jauh lebih efektif di Roblox dibanding memaksa GC.
+	CATATAN PENTING:
+	Roblox men-sandbox collectgarbage(). HANYA argumen "count" yang jalan;
+	"collect"/"setpause"/"setstepmul" TIDAK tersedia dan akan error kalau
+	dipanggil. Strategi kita: kurangi SAMPAH yang perlu di-GC (reuse table,
+	object pooling, weak cache), bukan memaksa GC itu sendiri.
+
+	PERUBAHAN v2 (STABILITAS):
+	1. Notifikasi in-game saat MULAI & SELESAI (StarterGui:SetCore), bukan
+	   cuma print() yang cuma kelihatan di console developer.
+	2. Setiap modul dibungkus pcall lewat SafeCall() -> kalau 1 modul error
+	   (misal Roblox update & ganti nama properti), modul lain tetap jalan.
+	3. Loop Heartbeat dibungkus pcall per-siklus supaya 1 error tidak
+	   nge-spam Output 60x/detik (yang justru bikin FPS makin turun).
+	4. WaitForChild pakai timeout, jadi script tidak hang selamanya kalau
+	   Character/Humanoid telat load.
+	5. Referensi Camera & Character di-refresh otomatis kalau berubah
+	   (respawn, kamera custom, dll), bukan cuma diambil sekali di awal.
 	=========================================================================
 ]]
 
 --=========================================================================
--- BAGIAN 0: CACHING SERVICE & FUNGSI (Micro-Optimization / Pilar 3)
+-- BAGIAN 0: SERVICE, FUNGSI, & HELPER STABILITAS
 --=========================================================================
--- Semua service & fungsi yang sering dipanggil di-cache ke variabel local.
--- Ini mempercepat lookup karena local variable diakses lewat register,
--- sedangkan global/Service:GetService() harus lewat hash table lookup.
 
-local RunService        = game:GetService("RunService")
-local Players           = game:GetService("Players")
-local Lighting          = game:GetService("Lighting")
-local Workspace          = game:GetService("Workspace")
-local UserGameSettings  = UserSettings():GetService("UserGameSettings")
+local RunService  = game:GetService("RunService")
+local Players      = game:GetService("Players")
+local Lighting     = game:GetService("Lighting")
+local Workspace     = game:GetService("Workspace")
+local StarterGui   = game:GetService("StarterGui")
 
 local LocalPlayer = Players.LocalPlayer
-local Camera       = Workspace.CurrentCamera
 
--- Cache fungsi math yang sering dipakai supaya tidak lookup ke tabel math tiap kali
-local mFloor = math.floor
-local mHuge  = math.huge
-
--- Cache fungsi tabel
+-- Cache fungsi tabel yang sering dipakai
 local tInsert = table.insert
 local tRemove = table.remove
 
-print("[FPS BOOSTER] Modul optimasi dimulai...")
+-- UserGameSettings bisa gagal diambil di konteks non-standar, jadi dibungkus pcall
+local UserGameSettings
+do
+	local ok, result = pcall(function()
+		return UserSettings():GetService("UserGameSettings")
+	end)
+	UserGameSettings = ok and result or nil
+end
+
+-- SafeCall: pembungkus pcall generik, dipakai untuk semua langkah modul.
+-- Kalau fn() error, modul itu di-skip dan dicatat lewat warn(), TAPI
+-- modul lain sesudahnya tetap dieksekusi (script tidak berhenti total).
+local function SafeCall(moduleName, fn)
+	local ok, err = pcall(fn)
+	if not ok then
+		warn(string.format("[FPS BOOSTER] Modul '%s' gagal: %s", moduleName, tostring(err)))
+	end
+	return ok
+end
+
+-- NotifyUser: notifikasi native Roblox (muncul di pojok kanan atas layar).
+-- Kalau fitur notifikasi core dimatikan developer game / tidak didukung
+-- platform, otomatis fallback ke print() supaya tidak error.
+local function NotifyUser(title, text, duration)
+	local ok = pcall(function()
+		StarterGui:SetCore("SendNotification", {
+			Title    = title,
+			Text     = text,
+			Duration = duration or 4,
+		})
+	end)
+	if not ok then
+		print(string.format("[FPS BOOSTER] %s - %s", title, text))
+	end
+end
+
+print("[FPS BOOSTER] Modul optimasi dimuat, menunggu game siap...")
 
 
 --=========================================================================
--- BAGIAN 1: PENGGANTI "GC MANIPULATION" -> ANTI-ALOKASI TABEL PER FRAME
+-- BAGIAN 1: MEMORY MONITOR (pengganti GC manipulation yang tak tersedia)
 --=========================================================================
 -- [RISIKO: AMAN]
--- Karena setpause/setstepmul tidak bisa diatur di Roblox, strategi terbaik
--- adalah MENGURANGI SAMPAH yang perlu dibersihkan GC. Kita sediakan modul
--- monitor memori + fungsi util agar developer TIDAK membuat {} baru
--- setiap frame (itulah penyebab utama micro-stutter akibat GC di Roblox).
 
 local MemoryMonitor = {}
 MemoryMonitor._lastCheck = 0
-MemoryMonitor._interval  = 5 -- detik, cek tiap 5 detik, jangan tiap frame
+MemoryMonitor._interval  = 5 -- detik, jangan cek tiap frame, cukup tiap 5 detik
 
 function MemoryMonitor:Check(dtNow)
 	if dtNow - self._lastCheck < self._interval then return end
 	self._lastCheck = dtNow
 
-	-- collectgarbage("count") mengembalikan memori Lua terpakai dalam KB
 	local memKB = collectgarbage("count")
-	if memKB > 300000 then -- ambang 300 MB, sesuaikan dgn game kamu
+	if memKB > 300000 then -- ambang 300 MB, sesuaikan dgn kebutuhan game kamu
 		warn(string.format("[FPS BOOSTER] Memori Lua tinggi: %.2f MB - cek kebocoran memori!", memKB / 1024))
 	end
 end
 
--- Contoh util "reuse table" alih-alih bikin baru tiap frame:
--- SALAH:  RunService.Heartbeat:Connect(function() local t = {} ... end)
--- BENAR:  siapkan tabel sekali di luar loop, lalu clear isinya tiap frame:
+-- Util reuse-table: clear isi tabel lama alih-alih bikin {} baru tiap frame
 local function ClearTable(t)
 	for k in pairs(t) do
 		t[k] = nil
@@ -81,24 +109,21 @@ end
 
 
 --=========================================================================
--- BAGIAN 2: RENDERING PIPELINE DOWNSCALE (Pilar 2)
+-- BAGIAN 2: RENDERING PIPELINE DOWNSCALE
 --=========================================================================
 -- [RISIKO: SEDANG] -> Mengubah tampilan visual game secara signifikan.
--- Beberapa properti (seperti GlobalShadows) hanya bisa diubah lewat script
--- jika kamu adalah developer game tsb (bukan exploit di game orang lain).
 
 local RenderOptimizer = {}
 
 function RenderOptimizer:LowerGraphicsQuality()
-	-- Turunkan quality level bawaan Roblox (1-10), 1 = paling ringan
-	-- Ini legal & resmi karena memakai API UserGameSettings, bukan exploit.
-	pcall(function()
-		UserGameSettings.SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1
-	end)
+	if not UserGameSettings then
+		warn("[FPS BOOSTER] UserGameSettings tidak tersedia, skip quality downscale.")
+		return
+	end
+	UserGameSettings.SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1
 end
 
 function RenderOptimizer:DisableHeavyLightingEffects()
-	-- Matikan post-processing effect berat (Bloom, Blur, DOF, SunRays, ColorCorrection)
 	local heavyEffects = {"BloomEffect", "BlurEffect", "DepthOfFieldEffect", "SunRaysEffect", "ColorCorrectionEffect"}
 	for _, effectName in ipairs(heavyEffects) do
 		local fx = Lighting:FindFirstChildWhichIsA(effectName)
@@ -106,82 +131,148 @@ function RenderOptimizer:DisableHeavyLightingEffects()
 			fx.Enabled = false
 		end
 	end
-	-- Matikan shadow global (drastis menaikkan FPS di device rendah)
 	Lighting.GlobalShadows = false
-	Lighting.FogEnd = 100000 -- fog jarak jauh dimatikan efeknya
+	Lighting.FogEnd = 100000
 end
 
-function RenderOptimizer:FlattenMaterials(root)
-	-- Ganti semua material berat (Neon custom, Glass, dsb) jadi SmoothPlastic
-	-- HANYA jalankan sekali saat load, JANGAN di loop RenderStepped!
-	for _, obj in ipairs(root:GetDescendants()) do
-		if obj:IsA("BasePart") then
-			obj.Material = Enum.Material.SmoothPlastic
-			obj.Reflectance = 0
-		elseif obj:IsA("ParticleEmitter") then
-			-- Turunkan rate partikel alih-alih menghapus total (opsional, lebih aman)
-			obj.Rate = obj.Rate * 0.25
-		end
+-- Registry pelacak objek yang SUDAH dipoloskan (weak table, jadi kalau
+-- objeknya di-Destroy, entry-nya otomatis lenyap & gak nahan memori).
+-- Ini juga yang bikin kita bisa CEK objek mana yang belum diproses,
+-- tanpa harus menebak-nebak.
+local FlattenedRegistry = setmetatable({}, { __mode = "k" })
+
+local function FlattenInstance(obj)
+	if FlattenedRegistry[obj] then return end -- sudah pernah diproses, skip
+
+	if obj:IsA("BasePart") then
+		obj.Material    = Enum.Material.SmoothPlastic
+		obj.Reflectance = 0
+		FlattenedRegistry[obj] = true
+	elseif obj:IsA("ParticleEmitter") then
+		obj.Rate = obj.Rate * 0.25
+		FlattenedRegistry[obj] = true
 	end
 end
 
--- Dynamic LOD sederhana: sembunyikan part yang jauh dari kamera
+function RenderOptimizer:FlattenMaterials(root)
+	-- Tahap 1: polosin semua objek yang SUDAH ADA di scene sekarang.
+	-- HANYA jalankan sekali saat load (bukan di loop per-frame!) karena
+	-- GetDescendants() men-scan seluruh isi root, cukup berat kalau sering.
+	for _, obj in ipairs(root:GetDescendants()) do
+		FlattenInstance(obj)
+	end
+end
+
+function RenderOptimizer:WatchForNewInstances(root)
+	-- Tahap 2: pantau objek yang BARU MUNCUL setelah ini (senjata yang
+	-- di-spawn, efek hit, proyektil, part yang di-clone runtime, dll)
+	-- dan otomatis dipoloskan begitu muncul di scene.
+	-- task.defer dipakai supaya script LAIN yang men-spawn objek ini
+	-- sempat selesai men-setup properti-nya dulu, baru kita timpa -
+	-- kalau langsung tanpa defer, kita bisa "menang duluan" sebelum
+	-- objeknya selesai di-configure oleh script yang men-spawn-nya.
+	root.DescendantAdded:Connect(function(obj)
+		task.defer(FlattenInstance, obj)
+	end)
+end
+
+function RenderOptimizer:CheckUnflattened(root)
+	-- Audit: cek TEMPAT/PATH mana saja yang BELUM dipoloskan.
+	-- Bisa dipanggil kapan saja lewat _G.FPSBoosterCheckUnflatten()
+	-- di Command Bar Studio buat verifikasi manual.
+	local missed = {}
+	for _, obj in ipairs(root:GetDescendants()) do
+		if obj:IsA("BasePart") and not FlattenedRegistry[obj] then
+			tInsert(missed, obj:GetFullName())
+		end
+	end
+
+	if #missed == 0 then
+		print("[FPS BOOSTER] Semua part sudah polos 100%, tidak ada yang terlewat.")
+	else
+		warn(string.format("[FPS BOOSTER] %d part BELUM dipoloskan, ini daftar tempatnya:", #missed))
+		for i = 1, math.min(#missed, 20) do
+			print("  - " .. missed[i])
+		end
+		if #missed > 20 then
+			print(string.format("  ...dan %d part lainnya (dipotong biar Output gak banjir)", #missed - 20))
+		end
+	end
+
+	return missed
+end
+
+-- Dynamic LOD: sembunyikan/collapse part yang jauh dari kamera
 local LOD_DISTANCE = 150 -- studs
-local lodTargets = {} -- cache referensi part yang mau di-LOD, isi manual/tag
+local lodTargets = {} -- isi manual dengan part yang mau di-LOD
+
+-- Camera di-refresh otomatis kalau berubah (bukan diambil sekali & dilupakan)
+local Camera = Workspace.CurrentCamera
+Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+	Camera = Workspace.CurrentCamera
+end)
 
 local function UpdateLOD()
+	if not Camera then return end
 	local camPos = Camera.CFrame.Position
 	for _, part in ipairs(lodTargets) do
 		if part and part.Parent then
 			local dist = (part.Position - camPos).Magnitude
-			part.Transparency = (dist > LOD_DISTANCE) and 1 or 0
-			-- CanCollide juga dimatikan biar physics engine gak proses part jauh
-			part.CanCollide = (dist > LOD_DISTANCE) and false or part.CanCollide
+			local isFar = dist > LOD_DISTANCE
+			part.Transparency = isFar and 1 or 0
+			part.CanCollide    = isFar and false or part.CanCollide
 		end
 	end
 end
 
 
 --=========================================================================
--- BAGIAN 3: EVENT THROTTLING & TIMER (Pilar 4)
+-- BAGIAN 3: KARAKTER, THROTTLING & TIMER
 --=========================================================================
 -- [RISIKO: AMAN]
--- JANGAN taruh logika non-visual di Heartbeat/RenderStepped mentah (60x/detik).
--- Gunakan accumulator delta-time supaya logic berjalan misal tiap 0.2 detik.
 
-local THROTTLE_INTERVAL = 0.2 -- detik, sesuaikan kebutuhan
-local _accumulator = 0
+local Character, Humanoid, RootPart
 
--- Cache referensi objek SEKALI di awal, jangan FindFirstChild tiap frame
-local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-local Humanoid  = Character:WaitForChild("Humanoid")
-local RootPart  = Character:WaitForChild("HumanoidRootPart")
+local function BindCharacter(char)
+	Character = char
+	-- WaitForChild dengan timeout 10 detik -> tidak nge-hang selamanya
+	Humanoid = char:WaitForChild("Humanoid", 10)
+	RootPart = char:WaitForChild("HumanoidRootPart", 10)
+	if not Humanoid or not RootPart then
+		warn("[FPS BOOSTER] Humanoid/HumanoidRootPart tidak ditemukan tepat waktu, fitur LOD/Physics-gate nonaktif sementara.")
+	end
+end
 
-LocalPlayer.CharacterAdded:Connect(function(newChar)
-	Character = newChar
-	Humanoid  = newChar:WaitForChild("Humanoid")
-	RootPart  = newChar:WaitForChild("HumanoidRootPart")
+if LocalPlayer.Character then
+	task.spawn(BindCharacter, LocalPlayer.Character)
+end
+LocalPlayer.CharacterAdded:Connect(function(char)
+	task.spawn(BindCharacter, char)
 end)
+
+local THROTTLE_INTERVAL = 0.2 -- detik
+local _accumulator = 0
 
 RunService.Heartbeat:Connect(function(dt)
 	_accumulator += dt
-
-	-- Update LOD & memory monitor TIDAK setiap frame, tapi tiap THROTTLE_INTERVAL
 	if _accumulator >= THROTTLE_INTERVAL then
 		_accumulator = 0
-		UpdateLOD()
-		MemoryMonitor:Check(os.clock())
+		-- Dibungkus pcall supaya 1 error tidak spam Output 60x/detik
+		local ok, err = pcall(function()
+			UpdateLOD()
+			MemoryMonitor:Check(os.clock())
+		end)
+		if not ok then
+			warn("[FPS BOOSTER] Error di loop optimasi: " .. tostring(err))
+		end
 	end
 end)
 
 
 --=========================================================================
--- BAGIAN 4: OBJECT POOLING FRAMEWORK (Pilar 5)
+-- BAGIAN 4: OBJECT POOLING FRAMEWORK
 --=========================================================================
 -- [RISIKO: AMAN]
--- Dipakai untuk efek yang sering muncul-hilang: peluru, hit-effect,
--- damage text, dll. Alih-alih :Destroy() lalu Instance.new() lagi
--- (mahal & bikin GC kerja keras), objek didaur ulang dari pool.
 
 local ObjectPool = {}
 ObjectPool.__index = ObjectPool
@@ -189,13 +280,12 @@ ObjectPool.__index = ObjectPool
 function ObjectPool.new(templateInstance, prewarmCount)
 	local self = setmetatable({}, ObjectPool)
 	self._template = templateInstance
-	self._pool     = {} -- array-part, indeks numerik berurutan (lebih cepat drpd hash-part)
+	self._pool     = {}
 	self._active   = {}
 
-	-- Prewarm: siapkan objek di awal biar tidak ada lag spike saat gameplay
-	for i = 1, (prewarmCount or 10) do
+	for _ = 1, (prewarmCount or 10) do
 		local clone = templateInstance:Clone()
-		clone.Parent = nil -- simpan di luar Workspace dulu (tidak dirender)
+		clone.Parent = nil
 		tInsert(self._pool, clone)
 	end
 
@@ -203,19 +293,18 @@ function ObjectPool.new(templateInstance, prewarmCount)
 end
 
 function ObjectPool:Get(parent, cframe)
-	local obj = tRemove(self._pool) -- ambil dari belakang (O(1), paling cepat)
+	local obj = tRemove(self._pool)
 	if not obj then
-		-- Pool kosong -> terpaksa clone baru (jarang terjadi jika prewarm cukup)
 		obj = self._template:Clone()
 	end
-	obj.CFrame  = cframe
-	obj.Parent  = parent
+	obj.CFrame = cframe
+	obj.Parent = parent
 	tInsert(self._active, obj)
 	return obj
 end
 
 function ObjectPool:Return(obj)
-	obj.Parent = nil -- "matikan" objek, JANGAN Destroy()
+	obj.Parent = nil
 	for i, activeObj in ipairs(self._active) do
 		if activeObj == obj then
 			tRemove(self._active, i)
@@ -225,25 +314,18 @@ function ObjectPool:Return(obj)
 	tInsert(self._pool, obj)
 end
 
--- Contoh pemakaian (uncomment & sesuaikan template kamu):
--- local bulletTemplate = ReplicatedStorage:WaitForChild("BulletTemplate")
+-- Contoh pemakaian:
 -- local BulletPool = ObjectPool.new(bulletTemplate, 30)
 -- local bullet = BulletPool:Get(Workspace, muzzlePos)
 -- task.delay(2, function() BulletPool:Return(bullet) end)
 
 
 --=========================================================================
--- BAGIAN 5: WEAK TABLES UNTUK CACHE (Pilar 6)
+-- BAGIAN 5: WEAK TABLE CACHE
 --=========================================================================
 -- [RISIKO: AMAN]
--- Dipakai untuk cache referensi objek (misal data per-Player atau per-Part)
--- supaya kalau objek aslinya sudah dihancurkan game, cache-nya otomatis
--- ikut "dilupakan" GC dan tidak menahan memori selamanya (mencegah leak).
 
 local WeakCache = setmetatable({}, { __mode = "k" })
--- __mode = "k" -> key dalam tabel ini adalah weak reference
--- Artinya kalau instance Part/Player di-Destroy, entry ini otomatis
--- hilang dari WeakCache saat GC jalan, TANPA perlu kita hapus manual.
 
 local function CacheData(instanceKey, data)
 	WeakCache[instanceKey] = data
@@ -255,27 +337,66 @@ end
 
 
 --=========================================================================
--- BAGIAN 6: PHYSICS / COLLISION TWEAK (Pilar 7)
+-- BAGIAN 6: PHYSICS / COLLISION GATE
 --=========================================================================
--- [RISIKO: SEDANG] -> Bisa mengubah rasa gameplay jika radius terlalu kecil.
--- Batasi collision check hanya untuk part yang dekat pemain.
+-- [RISIKO: SEDANG] -> Bisa terasa aneh kalau radius terlalu kecil.
 
 local COLLISION_CHECK_RADIUS = 100
 
 local function ShouldProcessPhysics(part)
-	if not RootPart then return true end
+	if not RootPart then return true end -- fallback aman selama character belum siap
 	local dist = (part.Position - RootPart.Position).Magnitude
 	return dist <= COLLISION_CHECK_RADIUS
 end
--- Pakai ShouldProcessPhysics(part) sebagai gate sebelum raycasting manual/
--- custom collision logic kamu, supaya part jauh tidak ikut dihitung.
 
 
 --=========================================================================
--- EKSEKUSI INISIALISASI
+-- EKSEKUSI INISIALISASI (dengan notifikasi & proteksi error)
 --=========================================================================
-RenderOptimizer:LowerGraphicsQuality()
-RenderOptimizer:DisableHeavyLightingEffects()
--- RenderOptimizer:FlattenMaterials(Workspace) -- aktifkan manual, cukup berat dijalankan sekali
 
-print("[FPS BOOSTER] Semua modul aktif. Selamat bermain dengan FPS lebih stabil!")
+-- Tunggu game selesai load asset dulu, kurangi race-condition.
+-- PENTING: game.Loaded cuma fire SEKALI, makanya wajib dicek IsLoaded()
+-- dulu, kalau tidak Wait() bisa hang selamanya kalau sudah fire duluan.
+if not game:IsLoaded() then
+	game.Loaded:Wait()
+end
+
+NotifyUser("FPS Booster", "Memulai optimasi FPS...", 3)
+
+local allStepsOk = true
+allStepsOk = SafeCall("LowerGraphicsQuality", function()
+	RenderOptimizer:LowerGraphicsQuality()
+end) and allStepsOk
+
+allStepsOk = SafeCall("DisableHeavyLightingEffects", function()
+	RenderOptimizer:DisableHeavyLightingEffects()
+end) and allStepsOk
+
+-- FlattenMaterials sekarang AKTIF otomatis, mencakup objek yang SUDAH
+-- ada maupun yang BARU muncul nanti. [RISIKO: SEDANG-TINGGI] karena ini
+-- mengubah tampilan visual SELURUH game secara terus-menerus, bukan cuma
+-- sekali jalan - kalau ada bagian map yang sengaja pakai material/efek
+-- tertentu untuk estetika, itu akan ikut dipoloskan juga.
+allStepsOk = SafeCall("FlattenMaterials", function()
+	RenderOptimizer:FlattenMaterials(Workspace)      -- polosin part yang sudah ada
+	RenderOptimizer:WatchForNewInstances(Workspace)  -- auto-polosin part yang muncul belakangan
+end) and allStepsOk
+
+if allStepsOk then
+	NotifyUser("FPS Booster", "Optimasi selesai! FPS kamu sekarang lebih stabil.", 4)
+else
+	NotifyUser("FPS Booster", "Optimasi selesai sebagian, cek Output (F9) untuk detail.", 5)
+end
+
+-- Laporan cepat sekali di awal: biasanya bakal 100% karena baru saja
+-- diproses. Nilainya justru di fungsi manual di bawah - dipanggil
+-- KAPAN SAJA (misal 1 menit kemudian) buat mastiin gak ada yang lolos.
+RenderOptimizer:CheckUnflattened(Workspace)
+
+-- Panggil ini dari Command Bar Studio (View > Command Bar) kapan saja
+-- buat audit manual: _G.FPSBoosterCheckUnflatten()
+_G.FPSBoosterCheckUnflatten = function()
+	return RenderOptimizer:CheckUnflattened(Workspace)
+end
+
+print("[FPS BOOSTER] Semua modul aktif.")
