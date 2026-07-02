@@ -1,6 +1,6 @@
 --[[
 	=========================================================================
-	 ULTIMATE FPS BOOSTER SCRIPT - ROBLOX (LUAU)  |  v2 - STABILITY PATCH
+	 ULTIMATE FPS BOOSTER SCRIPT - ROBLOX (LUAU)  |  v3 - VFX REMOVAL
 	=========================================================================
 	Jenis Script : LocalScript
 	Lokasi       : StarterPlayer > StarterPlayerScripts
@@ -22,6 +22,15 @@
 	   Character/Humanoid telat load.
 	5. Referensi Camera & Character di-refresh otomatis kalau berubah
 	   (respawn, kamera custom, dll), bukan cuma diambil sekali di awal.
+
+	PERUBAHAN v3 (FITUR BARU):
+	6. FlattenMaterials sekarang otomatis nyakup objek baru yang muncul
+	   belakangan, plus ada audit manual _G.FPSBoosterCheckUnflatten().
+	7. VFX REMOVAL (BARU): ParticleEmitter/Trail/Beam/Fire/Smoke/Sparkles
+	   dihapus TOTAL (:Destroy()), termasuk yang baru spawn nanti - lihat
+	   BAGIAN 2B. Explosion sengaja dikecualikan (bisa pengaruhi logic
+	   damage). Tandai VFX yang mau dikecualikan dengan Attribute
+	   "FPSBoosterKeep" = true di Studio.
 	=========================================================================
 ]]
 
@@ -144,12 +153,13 @@ local FlattenedRegistry = setmetatable({}, { __mode = "k" })
 local function FlattenInstance(obj)
 	if FlattenedRegistry[obj] then return end -- sudah pernah diproses, skip
 
+	-- CATATAN: ParticleEmitter sengaja TIDAK ditangani di sini lagi -
+	-- sekarang dia (+ Trail/Beam/Fire/Smoke/Sparkles) dihapus TOTAL oleh
+	-- modul VFX Removal di BAGIAN 2B, jadi gak diproses dua kali dengan
+	-- cara yang beda-beda.
 	if obj:IsA("BasePart") then
 		obj.Material    = Enum.Material.SmoothPlastic
 		obj.Reflectance = 0
-		FlattenedRegistry[obj] = true
-	elseif obj:IsA("ParticleEmitter") then
-		obj.Rate = obj.Rate * 0.25
 		FlattenedRegistry[obj] = true
 	end
 end
@@ -223,6 +233,113 @@ local function UpdateLOD()
 			part.CanCollide    = isFar and false or part.CanCollide
 		end
 	end
+end
+
+
+--=========================================================================
+-- BAGIAN 2B: VFX REMOVER (HAPUS PERMANEN)
+--=========================================================================
+-- [RISIKO: EKSTREM] -> :Destroy() itu PERMANEN, beda dengan FlattenMaterials
+-- yang cuma UBAH properti. Kalau ada script lain (buatan sendiri atau
+-- bawaan game) yang masih pegang referensi ke VFX ini dan nanti coba
+-- ubah propertinya, itu akan ERROR karena objeknya sudah tidak ada.
+-- Kalau mau opsi yang lebih aman & bisa dibalik, ganti obj:Destroy()
+-- di bawah jadi obj.Enabled = false (cek dulu class-nya punya properti
+-- Enabled atau tidak, tidak semua VFX class punya).
+
+local VFX_CLASSES_TO_REMOVE = {
+	"ParticleEmitter",
+	"Trail",
+	"Beam",
+	"Fire",
+	"Smoke",
+	"Sparkles",
+	-- "Explosion" SENGAJA tidak dimasukkan: Explosion di Roblox sering
+	-- nyambung ke logika damage/ledakan gameplay (bukan cuma visual),
+	-- jadi menghapusnya bisa memutus damage sebelum sempat diproses.
+	-- Tambahkan manual HANYA kalau yakin Explosion di game kamu murni
+	-- kosmetik dan tidak dipakai untuk hitung damage.
+}
+
+-- Lookup table (hash-part) -> pengecekan class match jadi O(1), konsisten
+-- dengan prinsip micro-optimization: hindari loop array di tiap objek.
+local VFXLookup = {}
+for _, className in ipairs(VFX_CLASSES_TO_REMOVE) do
+	VFXLookup[className] = true
+end
+
+local VFXRemover = {}
+VFXRemover._removedCount = 0
+
+local function TryRemoveVFX(obj)
+	if not VFXLookup[obj.ClassName] then return false end
+
+	-- Pengecualian manual: developer bisa kasih Attribute
+	-- "FPSBoosterKeep" = true lewat panel Properties/Attributes di Studio
+	-- pada VFX tertentu yang PENTING buat gameplay (misal indikator
+	-- ability aktif), supaya VFX itu tidak ikut dihapus.
+	if obj:GetAttribute("FPSBoosterKeep") == true then
+		return false
+	end
+
+	obj:Destroy()
+	VFXRemover._removedCount += 1
+	return true
+end
+
+function VFXRemover:RemoveExisting(root)
+	-- Tahap 1: hapus semua VFX yang SUDAH ADA di scene sekarang.
+	-- Ambil snapshot list dulu (GetDescendants), baru loop -> supaya
+	-- list-nya tidak berantakan gara-gara kita Destroy() objek di
+	-- tengah proses iterasi.
+	local targets = root:GetDescendants()
+	for _, obj in ipairs(targets) do
+		TryRemoveVFX(obj)
+	end
+end
+
+function VFXRemover:WatchForNewVFX(root)
+	-- Tahap 2: pantau VFX yang BARU MUNCUL nanti (efek tembakan, hit
+	-- effect, jejak peluru, dll) dan LANGSUNG dihapus begitu muncul -
+	-- TANPA task.defer (beda dengan FlattenMaterials), karena ClassName
+	-- sudah pasti sejak objek dibuat, jadi tidak perlu nunggu script lain
+	-- selesai setup properti dulu. Tujuannya mencegat VFX SEBELUM sempat
+	-- render walau cuma 1 frame.
+	root.DescendantAdded:Connect(function(obj)
+		TryRemoveVFX(obj)
+	end)
+end
+
+function VFXRemover:GetRemovedCount()
+	return self._removedCount
+end
+
+function VFXRemover:CheckRemaining(root)
+	-- Audit: cek TEMPAT mana saja yang masih ada VFX-nya. Harusnya 0,
+	-- KECUALI yang sengaja ditandai FPSBoosterKeep. Kalau ada class VFX
+	-- lain di luar VFX_CLASSES_TO_REMOVE yang lolos, itu juga bakal
+	-- kelihatan di sini (tanda perlu ditambahkan ke daftar).
+	-- Panggil kapan saja lewat _G.FPSBoosterCheckVFX()
+	local remaining = {}
+	for _, obj in ipairs(root:GetDescendants()) do
+		if VFXLookup[obj.ClassName] then
+			tInsert(remaining, obj:GetFullName() .. " (" .. obj.ClassName .. ")")
+		end
+	end
+
+	if #remaining == 0 then
+		print("[FPS BOOSTER] Tidak ada VFX tersisa di luar yang ditandai FPSBoosterKeep.")
+	else
+		warn(string.format("[FPS BOOSTER] %d VFX masih ada (FPSBoosterKeep atau class di luar daftar):", #remaining))
+		for i = 1, math.min(#remaining, 20) do
+			print("  - " .. remaining[i])
+		end
+		if #remaining > 20 then
+			print(string.format("  ...dan %d lainnya", #remaining - 20))
+		end
+	end
+
+	return remaining
 end
 
 
@@ -382,6 +499,14 @@ allStepsOk = SafeCall("FlattenMaterials", function()
 	RenderOptimizer:WatchForNewInstances(Workspace)  -- auto-polosin part yang muncul belakangan
 end) and allStepsOk
 
+-- VFX Remover: [RISIKO: EKSTREM] - Destroy() itu PERMANEN. Kalau ada
+-- script lain yang masih pegang referensi ke VFX yang sudah dihapus,
+-- itu bisa error saat script itu coba mengubah propertinya lagi.
+allStepsOk = SafeCall("VFXRemover", function()
+	VFXRemover:RemoveExisting(Workspace)  -- hapus VFX yang sudah ada
+	VFXRemover:WatchForNewVFX(Workspace)  -- auto-hapus VFX yang baru muncul
+end) and allStepsOk
+
 if allStepsOk then
 	NotifyUser("FPS Booster", "Optimasi selesai! FPS kamu sekarang lebih stabil.", 4)
 else
@@ -399,4 +524,17 @@ _G.FPSBoosterCheckUnflatten = function()
 	return RenderOptimizer:CheckUnflattened(Workspace)
 end
 
-print("[FPS BOOSTER] Semua modul aktif.")
+-- Sama seperti di atas, panggil ini kapan saja buat lihat sudah berapa
+-- banyak VFX yang dihapus sejak game jalan: _G.FPSBoosterVFXRemovedCount()
+_G.FPSBoosterVFXRemovedCount = function()
+	return VFXRemover:GetRemovedCount()
+end
+
+-- Audit lokasi VFX yang mungkin masih tersisa (FPSBoosterKeep atau
+-- class di luar daftar): _G.FPSBoosterCheckVFX()
+_G.FPSBoosterCheckVFX = function()
+	return VFXRemover:CheckRemaining(Workspace)
+end
+VFXRemover:CheckRemaining(Workspace)
+
+print(string.format("[FPS BOOSTER] Semua modul aktif. %d VFX dihapus di scan awal.", VFXRemover:GetRemovedCount()))
